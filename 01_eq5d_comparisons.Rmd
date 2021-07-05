@@ -1,0 +1,594 @@
+---
+title: "EQ5D comparisons"
+author: "PHOSP-COVID collaborative"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  word_document:
+    reference_docx: template.docx 
+---
+
+```{r setup, include=FALSE}
+if (knitr::is_html_output()){
+  knitr::opts_chunk$set(echo = TRUE,
+                        warning = FALSE,
+                        message = FALSE)
+} else {
+  knitr::opts_chunk$set(echo = FALSE,
+                        warning = FALSE,
+                        message = FALSE)
+}
+
+library(finalfit)
+library(knitr)
+library(tidyverse)
+library(rmarkdown)
+
+summary_factorlist <- purrr::partial(finalfit::summary_factorlist, na_to_prop = FALSE)
+
+mykable = function(x, align = c("l", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r"), ...){
+  knitr::kable(x,  
+               booktabs = TRUE, 
+               linesep = "", ...) 
+}
+```
+
+```{r}
+# Made in 00_analysis.Rmd
+load("full_image_090621.Rdata")
+```
+
+## When was pre-COVID EQ5D administered?
+
+```{r}
+# EQ5D variables
+
+# When waspre-completed?
+phosp %>% 
+  select(study_id, redcap_event_name, eq5d5l_q1_pre) %>% 
+  drop_na() %>% 
+  select(-eq5d5l_q1_pre) %>% 
+  arrange(redcap_event_name) %>% 
+  group_by(study_id) %>% 
+  summarise(event = paste(redcap_event_name, collapse = "_")) %>% 
+  ungroup() %>% 
+  count(event) %>% 
+  arrange(-n) %>% 
+  mykable()
+```
+
+## How did pre-COVID EQ5D vary by visit?
+
+```{r fig.height=8, fig.width=12}
+phosp %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+  mutate(redcap_event_name = fct_relabel(redcap_event_name, str_trunc, width = 8, ellipsis = "")) %>% 
+  pivot_longer(matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+  drop_na() %>% 
+  ggplot_lancet(aes(x = redcap_event_name, y = value, group = study_id)) + 
+  geom_line(position=position_jitter(w=0.2, h=0.2), alpha = 0.2) + 
+  facet_wrap(.~ name)
+```
+
+## How different were results?
+
+Of those that had it measured on more than one occasion, how did it compare? 
+
+* \>0 worse
+* \<0 better
+
+```{r eval=FALSE, include=FALSE}
+phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+  drop_na() %>% 
+  group_by(study_id) %>% 
+  mutate(across(matches("eq5d5l_[q12345]*_pre_numeric"), ~ .x - lag(.x))) %>% 
+  drop_na() %>% 
+  ungroup() %>% 
+  pivot_longer(matches("eq5d5l_[q12345]*_pre_numeric"), values_to = "Difference in value later minus earlier") %>% 
+  count(name, `Difference in value later minus earlier`) %>%
+  mutate(name = finalfit:::rm_duplicates(name)) %>% 
+  mykable(align = c("l", "r", "r"))
+```
+
+```{r}
+phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+  drop_na() %>% 
+  group_by(study_id) %>% 
+  mutate(across(matches("eq5d5l_[q12345]*_pre_numeric"), ~ .x - lag(.x))) %>% 
+  drop_na() %>% 
+  ungroup() %>% 
+  pivot_longer(matches("eq5d5l_[q12345]*_pre_numeric"), values_to = "Difference in value later minus earlier") %>% 
+  count(name, `Difference in value later minus earlier`) %>%
+  ggplot_lancet(aes(x = factor(`Difference in value later minus earlier`), y = n)) + 
+  geom_col() + 
+  facet_wrap(. ~ name) + 
+  xlab("Difference in value later minus earlier (greater is worse)")
+```
+
+## When was post-COVID EQ5D administered?
+
+```{r}
+# EQ5D variables
+
+# When waspre-completed?
+phosp %>% 
+  select(study_id, redcap_event_name, eq5d5l_q1) %>% 
+  drop_na() %>% 
+  select(-eq5d5l_q1) %>% 
+  arrange(redcap_event_name) %>% 
+  group_by(study_id) %>% 
+  summarise(event = paste(redcap_event_name, collapse = "_")) %>% 
+  ungroup() %>% 
+  count(event) %>% 
+  arrange(-n) %>% 
+  mykable()
+```
+
+## How did post-COVID EQ5D vary by visit?
+
+```{r fig.height=8, fig.width=12}
+phosp %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_numeric")) %>% 
+  mutate(redcap_event_name = fct_relabel(redcap_event_name, str_trunc, width = 8, ellipsis = "")) %>% 
+  pivot_longer(matches("eq5d5l_[q12345]*_numeric")) %>% 
+  drop_na() %>% 
+  ggplot_lancet(aes(x = redcap_event_name, y = value, group = study_id)) + 
+  geom_line(position=position_jitter(w=0.2, h=0.2), alpha = 0.2) + 
+  facet_wrap(.~ name)
+```
+
+
+```{r}
+# Set up EQ5D trajectories, probably joins easiest
+## Set pre-COVID q1 to q5. 
+phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  filter(study_id == "3-12") %>% 
+  # select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q1]*_pre_numeric")) %>% 
+  group_by(study_id) %>% 
+  #summarise(test = sum(eq5d5l_q1_pre_numeric, na.rm = TRUE))
+  summarise(
+    eq5d5l_q1_pre_numeric = case_when(
+      !is.na(eq5d5l_q1_pre_numeric) & redcap_event_name == "3 Months (1st Research Visit)" ~ eq5d5l_q1_pre_numeric,
+      !is.na(eq5d5l_q1_pre_numeric) & redcap_event_name == "Add. Planned Clinical Visits" ~ eq5d5l_q1_pre_numeric,
+      !is.na(eq5d5l_q1_pre_numeric) & redcap_event_name == "6 Weeks" ~ eq5d5l_q1_pre_numeric,
+      !is.na(eq5d5l_q1_pre_numeric) & redcap_event_name == "12 Months (2nd Research Visit" ~ eq5d5l_q1_pre_numeric,
+      !is.na(eq5d5l_q1_pre_numeric) & redcap_event_name == "Unscheduled" ~ eq5d5l_q1_pre_numeric,
+    )
+  )
+?first  
+  
+```
+
+
+
+```{r}
+# Set up EQ5D trajectories, probably joins easiest
+## Set pre-COVID q1 to q5.
+## Going to work with date instrument completed, so will not fill a missing question from another time point. 
+## Therefore, work on assumption that if q1 non-missing, this is the event to use. 
+phosp_eq5d_baseline = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+
+    # Arrange events in the order of priority for extracting pre-covid status
+  mutate(
+    redcap_event_name = fct_relevel(redcap_event_name,
+                                   "3 Months (1st Research Visit)",
+                                   "Add. Planned Clinical Visits",
+                                   "6 Weeks",
+                                   "12 Months (2nd Research Visit)",
+                                   "Unscheduled")
+  ) %>% 
+  arrange(redcap_event_name) %>% 
+  
+  # Now take the first non-missing row
+  drop_na(eq5d5l_q1_pre_numeric) %>% 
+  group_by(study_id) %>% 
+  slice(1) %>% 
+  
+  # Add in admission date which is what we will consider the baseline to be from
+  left_join(phosp %>% select(study_id, crf1a_date_adm, crf1a_date_first_symptoms) %>% 
+              # This fills missing admin date with symptom onset date, but doesn't do much at the moment
+              # Left as coudl substitute another date. 
+              mutate(crf1a_date_adm = coalesce(crf1a_date_adm, crf1a_date_first_symptoms)) %>% 
+              drop_na()
+  ) %>% 
+  select(-crf1a_date_first_symptoms, -redcap_event_name) 
+```
+
+
+```{r fig.height=8, fig.width=12}
+library(magrittr)
+plot_data = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, eq5d_date, crf3a_visit_date, matches("eq5d5l_[q12345]*_numeric")) %>% 
+  drop_na(eq5d5l_q1_numeric) %>% 
+  # Dates first
+  # eq5d_date better completed than crf3a_visit_date. Use this and fill with crf3avisit_date if missing
+  mutate(
+    eq5d_date = coalesce(eq5d_date, crf3a_visit_date)
+  )  %>% 
+  left_join(phosp_eq5d_baseline %>% select(study_id, crf1a_date_adm)) %>% 
+  mutate(days_to_eq5d = (eq5d_date - crf1a_date_adm) %>% as.numeric()) %>% 
+  select(-eq5d_date, -crf3a_visit_date, -crf1a_date_adm) %>% 
+  pivot_longer(matches("eq5d5l_[q12345]*_numeric")) %>% 
+  bind_rows(
+    phosp_eq5d_baseline %>%
+      rename_with(~ gsub("pre_", "", .x)) %>% 
+      pivot_longer(matches("eq5d5l_[q12345]*_numeric")) %>% 
+      mutate(redcap_event_name = "Baseline",
+             days_to_eq5d = 0) %>% 
+      select(-crf1a_date_adm)
+  ) %>% 
+  filter(days_to_eq5d >= 0) %>% 
+  filter(days_to_eq5d < 500) %T>%
+  {total_n <<- (.) %>% 
+    distinct(study_id) %>% 
+    dim() %>% 
+    extract(1)} %>% 
+  mutate(name = factor(name, 
+                       levels = c("eq5d5l_q1_numeric", "eq5d5l_q2_numeric", "eq5d5l_q3_numeric",
+                                  "eq5d5l_q4_numeric", "eq5d5l_q5_numeric"),
+                       labels = c("Mobility", "Self-care", "Usual activities", "Pain/discomfort", "Anxiety/depression")
+  )) %>% 
+  
+  # Bring baseline characteristics back in
+  left_join(
+    phosp %>% 
+  
+  # Fill through where necessary
+  group_by(study_id) %>% 
+  fill(crf3a_bmi_2levels, crf3a_bmi_5levels, .direction = "downup") %>% 
+  ungroup() %>% 
+
+  filter(redcap_event_name == "Hospital Discharge") %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, age_admission_factor, 
+                crf1a_sex, 
+                crf1b_eth_5levels, 
+                imd_quintile,
+                crf3a_bmi_2levels,
+                crf3a_bmi_5levels, 
+                no_comorbid_3levels)
+  ) %>% 
+  arrange(study_id, days_to_eq5d)  # Just to visualise
+```
+
+
+```{r fig.height=8, fig.width=12}
+plot_data  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value, group = study_id)) +
+  geom_line(position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_wrap(. ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+```
+
+```{r fig.height=8, fig.width=12}
+plot_data %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  geom_smooth() +
+  facet_wrap(. ~ name) + 
+  ggtitle("EQ5D following COVID-19",
+          paste("n = ", total_n, "., Baseline function and time 0 is date of admission to hospital"))
+```
+
+```{r}
+plot_data  %>% 
+  drop_na(crf1a_sex) %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  # geom_smooth() +
+  geom_line(aes(group = study_id), position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(crf1a_sex ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+```{r}
+plot_data  %>% 
+  drop_na(crf1a_sex) %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value, colour = crf1a_sex)) +
+  geom_smooth() +
+  # geom_line(aes(group = study_id), position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(. ~ name) + 
+  labs(x = "Days from hospital admission", colour = "") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+```
+
+```{r}
+plot_data  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  geom_smooth() +
+  # geom_line(position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(age_admission_factor ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+```{r}
+plot_data  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  geom_smooth() +
+  # geom_line(position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(crf3a_bmi_2levels ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+```{r}
+plot_data  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  # geom_smooth() +
+  geom_line(aes(group = study_id), position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(crf1b_eth_5levels ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+
+
+
+```{r}
+plot_data2 = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, eq5d_date, crf3a_visit_date, matches("eq5d5l_[q12345]*_numeric")) %>% 
+  drop_na(eq5d5l_q1_numeric) %>% 
+  # Dates first
+  # eq5d_date better completed than crf3a_visit_date. Use this and fill with crf3avisit_date if missing
+  mutate(
+    eq5d_date = coalesce(eq5d_date, crf3a_visit_date)
+  )  %>% 
+  left_join(phosp_eq5d_baseline %>% select(study_id, crf1a_date_adm)) %>% 
+  mutate(days_to_eq5d = (eq5d_date - crf1a_date_adm) %>% as.numeric()) %>% 
+  left_join(phosp_eq5d_baseline) %>% 
+  mutate(
+    eq5d5l_q1_numeric = eq5d5l_q1_numeric - eq5d5l_q1_pre_numeric,
+    eq5d5l_q2_numeric = eq5d5l_q2_numeric - eq5d5l_q2_pre_numeric,
+    eq5d5l_q3_numeric = eq5d5l_q3_numeric - eq5d5l_q3_pre_numeric,
+    eq5d5l_q4_numeric = eq5d5l_q4_numeric - eq5d5l_q4_pre_numeric,
+    eq5d5l_q5_numeric = eq5d5l_q5_numeric - eq5d5l_q5_pre_numeric,
+  ) %>% 
+  select(-eq5d_date, -crf3a_visit_date, -crf1a_date_adm,
+         -matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+  pivot_longer(matches("eq5d5l_[q12345]*_numeric")) %>% 
+  bind_rows(
+    phosp_eq5d_baseline %>%
+      rename_with(~ gsub("pre_", "", .x)) %>% 
+      pivot_longer(matches("eq5d5l_[q12345]*_numeric")) %>% 
+      mutate(redcap_event_name = "Baseline",
+             days_to_eq5d = 0,
+             value = 0) %>% 
+      select(-crf1a_date_adm)
+  ) %>% 
+  filter(days_to_eq5d >= 0) %>% 
+  filter(days_to_eq5d < 500) %T>%
+  {total_n <<- (.) %>% 
+    distinct(study_id) %>% 
+    dim() %>% 
+    extract(1)} %>% 
+  mutate(name = factor(name, 
+                       levels = c("eq5d5l_q1_numeric", "eq5d5l_q2_numeric", "eq5d5l_q3_numeric",
+                                  "eq5d5l_q4_numeric", "eq5d5l_q5_numeric"),
+                       labels = c("Mobility", "Self-care", "Usual activities", "Pain/discomfort", "Anxiety/depression")
+  )) %>% 
+  
+  # Bring baseline characteristics back in
+  left_join(
+    phosp %>% 
+  
+  # Fill through where necessary
+  group_by(study_id) %>% 
+  fill(crf3a_bmi_2levels, crf3a_bmi_5levels, .direction = "downup") %>% 
+  ungroup() %>% 
+
+  filter(redcap_event_name == "Hospital Discharge") %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, age_admission_factor, 
+                crf1a_sex, 
+                crf1b_eth_5levels, 
+                imd_quintile,
+                crf3a_bmi_2levels,
+                crf3a_bmi_5levels, 
+                no_comorbid_3levels)
+  ) %>% 
+  arrange(study_id, days_to_eq5d)  # Just to visualise
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+plot_data2  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value, group = study_id)) +
+  geom_line(position=position_jitter(w=0.3, h=0.3), alpha = 0.1) + 
+  facet_wrap(. ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+```
+
+```{r fig.height=8, fig.width=12}
+plot_data2 %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  geom_smooth() +
+  facet_wrap(. ~ name) + 
+  ggtitle("EQ5D following COVID-19",
+          paste("n = ", total_n, "., Baseline function and time 0 is date of admission to hospital"))
+```
+
+```{r}
+plot_data2  %>% 
+  drop_na(crf1a_sex) %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  # geom_smooth() +
+  geom_line(aes(group = study_id), position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(crf1a_sex ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+```{r}
+plot_data2  %>% 
+  drop_na(crf1a_sex) %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value, colour = crf1a_sex)) +
+  geom_smooth(formula = y ~ s(x, bs = "ts")) +
+  # geom_line(aes(group = study_id), position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(. ~ name) + 
+  labs(x = "Days from hospital admission", colour = "") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+```
+
+```{r}
+plot_data2  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  geom_smooth() +
+  # geom_line(position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(age_admission_factor ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+```{r}
+plot_data2  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  geom_smooth() +
+  # geom_line(position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(crf3a_bmi_2levels ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+```{r}
+plot_data2  %>% 
+  ggplot_lancet(aes(x = days_to_eq5d, y = value)) +
+  # geom_smooth() +
+  geom_line(aes(group = study_id), position=position_jitter(w=0.3, h=0.3), alpha = 0.12) + 
+  facet_grid(crf1b_eth_5levels ~ name) + 
+  xlab("Days from hospital admission") +
+  ggtitle("EQ5D following COVID-19",
+          paste0("n = ", total_n, ". Baseline function and time 0 is date of admission to hospital"))
+
+```
+
+## Alluvial plot
+
+```{r}
+library(ggalluvial)
+alluvial_data = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_numeric")) %>% 
+  drop_na(eq5d5l_q1_numeric) %>% 
+  bind_rows(
+    phosp_eq5d_baseline %>% 
+  rename_with(~ gsub("pre_", "", .x)) %>% 
+  mutate(redcap_event_name = "Baseline") %>% 
+  select(-crf1a_date_adm)
+  ) %>% 
+  
+  # Up to now then we have row per patient-event and each eq5d at those events
+  ## Now make vertical factor for alluvial plot. 
+  
+  mutate(
+    eq5d5l_status = select(., matches("eq5d5l_[q12345]*_numeric")) %>% 
+      apply(1, function(.x){                                                                
+        case_when(
+          all(.x == 0) ~ "Perfect health",                                           
+          any(.x == 1) ~ "Any 1",
+          any(.x >= 2) ~ "Any 2+",
+          all(is.na(.x)) ~ NA_character_,
+          # TRUE ~  "Perfect health (missing 1+ domain)" # Very few here
+          TRUE ~  "Perfect health"
+        )
+      }
+      ) %>% 
+      factor() %>% 
+      fct_relevel("Perfect health", "Perfect health (missing 1+ domain)", "Any 1", "Any 2+")
+  ) %>% 
+  select(-matches("eq5d5l_[q12345]*_numeric")) %>% 
+  pivot_wider(id_cols = study_id, names_from = redcap_event_name, values_from = eq5d5l_status) %>% 
+  select(-study_id)
+```
+
+```{r}
+alluvial_data %>% 
+  count(`Baseline`, `6 Weeks`,  `3 Months (1st Research Visit)`, `12 Months (2nd Research Visit)`) %>% 
+  ggforce::gather_set_data(., x = 1:(which(colnames(.)=="n")-1), id="alluvium") %>%
+  dplyr::mutate(project = factor(x, levels = unique(x)),
+                strata = factor(y, levels = unique(y))) %>% 
+  # select only essential columns
+  dplyr::select(project, strata, n, alluvium) %>%
+  
+  # plot data
+  ggplot() +
+  aes(x = project, y = n, alluvium = alluvium, stratum = strata, fill = strata, label = strata) +
+  ggalluvial::geom_flow(stat = "alluvium", lode.guidance = "rightleft", aes.flow = "forward", colour = "black",
+                        alpha = 0.6) +
+  ggalluvial::geom_stratum(alpha = 0.6, colour = "black") +
+  geom_text(stat = "stratum", size = 4, fontface = 2) +
+  #scale_x_discrete("", labels = c("Admission location", "HDU/ITU after day 1", "Maximum treatment", "Outcome")) +
+  scale_y_continuous(name = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_classic(base_size = 18) + guides(fill=FALSE) +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.line=element_blank())
+```
+
+
+```{r}
+alluvial_data %>% 
+  select(-`6 Weeks`) %>% 
+  count(`Baseline`, `3 Months (1st Research Visit)`, `12 Months (2nd Research Visit)`) %>% 
+  ggforce::gather_set_data(., x = 1:(which(colnames(.)=="n")-1), id="alluvium") %>%
+  dplyr::mutate(project = factor(x, levels = unique(x)),
+                strata = factor(y, levels = unique(y))) %>% 
+  # select only essential columns
+  dplyr::select(project, strata, n, alluvium) %>%
+  
+  # plot data
+  ggplot() +
+  aes(x = project, y = n, alluvium = alluvium, stratum = strata, fill = strata, label = strata) +
+  ggalluvial::geom_flow(stat = "alluvium", lode.guidance = "rightleft", aes.flow = "forward", colour = "black",
+                        alpha = 0.6) +
+  ggalluvial::geom_stratum(alpha = 0.6, colour = "black") +
+  geom_text(stat = "stratum", size = 4, fontface = 2) +
+  scale_x_discrete("", labels = c("Baseline", "3 months", "12 months")) +
+  scale_y_continuous(name = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_classic(base_size = 18) + guides(fill=FALSE) +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.line=element_blank())
+```

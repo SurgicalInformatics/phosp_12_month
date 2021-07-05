@@ -1,0 +1,673 @@
+---
+title: "PHOSP-COVID report"
+author: "PHOSP-COVID collaborative"
+output:
+  word_document
+---
+
+```{r setup, include=FALSE}
+library(finalfit)
+library(knitr)
+library(tidyverse)
+library(rmarkdown)
+
+summary_factorlist <- purrr::partial(finalfit::summary_factorlist, na_to_prop = FALSE)
+
+
+mykable = function(x, row.names = FALSE){
+    knitr::kable(x, row.names = row.names, align = c("l", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r")) 
+}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+```{r eval=FALSE, include=FALSE}
+# Only run once for each new data pull
+library(readr) # loaded with tidyverse anyway
+datadir = "/home/common/phosp/raw/"
+timestamp = "2021-06-21_1001"
+phosp   = read_rds(paste0(datadir, "phosp_", timestamp, ".rds"))
+lastrun = Sys.time()
+source("/home/eharrison/phosp_clean/02_functions.R")
+source("/home/eharrison/phosp_clean/03_prep.R")
+source("/home/eharrison/phosp_clean/05_kco.R")
+save.image("full_image_210621_first_paper.Rdata", compress = TRUE)
+```
+
+```{r}
+# Load data
+load("full_image_210621_first_paper.Rdata")
+```
+
+```{r}
+# Study id of patients with both 3 month and 12 month psq_recovered
+study_id_3m_12m_psq_recovered = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  filter(redcap_event_name %in% c("3 Months (1st Research Visit)", "12 Months (2nd Research Visit)")) %>% 
+  select(study_id, redcap_event_name, psq_recovered) %>% 
+  drop_na(psq_recovered) %>% 
+  count(study_id) %>% 
+  filter(n == 2) %>% 
+  pull(study_id)
+```
+
+
+```{r}
+# Filter at 240 days follow up. 
+study_id_240 = phosp %>% 
+  group_by(study_id) %>% 
+  fill(crf1a_date_dis, crf3a_visit_date, .direction = "downup") %>% 
+  select(study_id, crf1a_date_dis, crf3a_visit_date) %>% 
+  distinct(study_id, .keep_all = TRUE) %>% 
+  mutate(discharge2review = (crf3a_visit_date - crf1a_date_dis) %>% as.numeric()) %>% 
+  filter(discharge2review <= 240 | is.na(discharge2review)) %>% 
+  pull(study_id)
+```
+
+```{r}
+# This defines the patients retained
+## Currently n = 283
+keep = phosp_hosp %>% 
+  filter(tier == 2) %>% 
+  filter(study_id %in% study_id_3m_12m_psq_recovered) %>% 
+  filter(study_id %in% study_id_240) %>% 
+  drop_na(crf1a_resp_support_4levels) %>% 
+  filter(!is.na(crf1a_sex)) %>% 
+  filter(study_id != "28-31") %>% # Temp remove as no 3 m data coming through
+  pull(study_id)
+
+phosp = phosp %>% 
+  filter(study_id %in% keep)
+```
+
+```{r}
+# Variables to present
+baseline = c("age_admission", 
+             "age_admission_factor",
+             "crf1a_sex", 
+             "crf1b_eth_5levels", 
+             "imd_quintile",
+             # Comorbidities
+             "no_comorbid",
+             "no_comorbid_3levels",
+             "crf1a_com_card", "crf1a_com_neupsy",
+             "crf1a_com_res", "crf1a_com_rheu",
+             "crf1a_com_gast", "crf1a_com_mer", 
+             "crf1a_com_mh", "crf1a_com_diab",
+             "crf1a_com_id")
+
+# Symptoms
+psq_scale = c("psq_scale_blness_24hrs", "psq_scale_fatigue_24hrs", "psq_scale_sleep_24hrs", 
+              "psq_scale_cough_24hrs",  "psq_scale_pain_24hrs")
+neuro = c("loss_of_sense_of_smell", "loss_of_taste", "confusion_fuzzy_head", "difficulty_with_communicat", 
+          "difficulty_with_concentrat", "short_term_memory_loss", "physical_slowing_down", 
+          "slowing_down_in_your_think", "headache", 
+          "altered_personality_behavi", "limb_weakness", "problems_with_balance", "can_t_move_and_or_feel_one",
+          "problems_seeing", 
+          "tingling_feeling_pins_and", "can_t_fully_move_or_contro", "tremor_shakiness", "seizures")
+musculoskeletal = c("aching_in_your_muscles_pai", "joint_pain_or_swelling")
+cardiorespiratory = c("leg_ankle_swelling", "chest_pain", "chest_tightness", "pain_on_breathing", "palpitations", 
+                      "dizziness_or_lightheadness", "fainting_blackouts")
+gastrointestinal_genitourinary = c("diarrhoea", "constipation", "nausea_vomiting", "abdominal_pain", 
+                                   "loss_of_appetite", 
+                                   "loss_of_control_of_passing", "loss_of_control_of_opening", 
+                                   "weight_loss", "stomach_pain", 
+                                   "psq_symp_ed", "skin_rash", "lumpy_lesions_purple_pink", "bleeding")
+psq = c("psq_balance_q1_since", "psq_balance_q2_since")
+tinnitus = "psq_tinnitus_since"
+
+all_symptoms = c(neuro, musculoskeletal, cardiorespiratory, gastrointestinal_genitourinary, psq_scale, psq, tinnitus)
+
+# PFTs
+pfts = c(  "pft_fev1_perc_pred",
+           "pft_fev1",
+           "pft_fev1_perc_pred_80",
+           "pft_fvc_perc_pred",
+           "pft_fvc",
+           "pft_fvc_perc_pred_80",
+           "pft_fev1_fvc",
+           "pft_fev1_fvc_70",
+           "pft_tlco",
+           "pft_tlco_pred",
+           "pft_tlco_pred_80",
+           "pft_kco",           
+           "pft_kco_pred",
+           "pft_kco_pred_80"
+)
+
+# Bloods
+bloods = c("bnp_result", "pnbnp_result", "bnp_summary", "hba1c_result", "hba1c_summary", "egfr_result", 
+           "egfr_summary", "ddi_result", "ddi_summary", "crp_result", "crp_summary")
+
+eq5d = c("eq5d5l_summary",
+         "eq5d5l_utility_index",
+         "eq5d5l_q1",
+         "eq5d5l_q2",
+         "eq5d5l_q3",
+         "eq5d5l_q4",
+         "eq5d5l_q5")
+```
+
+
+```{r}
+# Makes tables for repeating instrument data
+phosp_pft_table = phosp %>% 
+  filter(redcap_repeat_instrument == "Pulmonary Functional Tests") %>% 
+  filter(pft_spm_done == "Yes") %>% 
+  select(study_id, redcap_event_name, starts_with("pft_")) %>% 
+  drop_na(pft_fev1) %>% 
+  group_by(study_id, redcap_event_name) %>% 
+  mutate(value_max = if_else(row_number() == which.max(pft_fev1), TRUE, FALSE)) %>% 
+  filter(value_max) %>%
+  select(-value_max) %>% 
+  ff_relabel_df(phosp)
+
+# Do kco and tlco extraction and percentage normal separately. 
+phosp_kco_table = phosp %>% 
+  filter(redcap_repeat_instrument == "Pulmonary Functional Tests") %>% 
+  filter(pft_spm_done == "Yes") %>% 
+  select(study_id, redcap_event_name, pft_tlco, pft_kco) %>% 
+  drop_na(pft_kco) %>% 
+  left_join(phosp_kco %>% select(study_id, tlcoM_SI_pred, kcoM_SI_pred)) %>% 
+  mutate(
+    pft_tlco_pred = (100 * pft_tlco / tlcoM_SI_pred) %>% ff_label("TLCO % predicted"),
+    pft_kco_pred = (100 * pft_kco / kcoM_SI_pred) %>% ff_label("KCO % predicted"),
+    
+    pft_tlco_pred_80 = case_when(
+      pft_tlco_pred < 80 ~ "Yes",
+      pft_tlco_pred >= 80 ~ "No",
+    ) %>% 
+      ff_label("TLCO predicted <80%"),
+    
+    pft_kco_pred_80 = case_when(
+      pft_kco_pred < 80 ~ "Yes",
+      pft_kco_pred >= 80 ~ "No",
+    ) %>% 
+      ff_label("KCO predicted <80%"),
+    
+  ) %>% 
+  ff_relabel_df(phosp)
+
+phosp_pft_table = phosp_pft_table %>% 
+  select(-c("pft_tlco", "pft_kco")) %>% 
+  left_join(phosp_kco_table)
+```
+
+
+```{r}
+# WT
+phosp_wt_table = phosp_wt %>% 
+  select(study_id, redcap_event_name, wt_distance, wt_iswt_predicted_perc) %>% 
+  drop_na(wt_distance) %>% 
+  group_by(study_id, redcap_event_name) %>% 
+  mutate(value_max = if_else(row_number() == which.max(wt_distance), TRUE, FALSE)) %>% 
+  filter(value_max) %>% 
+  select(-value_max) %>% 
+  ff_relabel_df(phosp)
+```
+
+
+```{r}
+# Bloods
+phosp_bloods_table = phosp %>% 
+  filter(redcap_repeat_instrument == "Laboratory Results Collection Log - Routine blood tests") %>% 
+  group_by(study_id, redcap_event_name) %>% 
+  summarise(
+    # This needs to summarise over multiple blood tests per visit. 
+    # Take max values and yes over no. 
+    # Convoluted by necessity. 
+    # note case_when doesn't currently work with any. Known issue Feb 21
+    bnp_result = ifelse(all(is.na(bnp_result)), NA, max(bnp_result, na.rm = TRUE)),
+    pnbnp_result = ifelse(all(is.na(pnbnp_result)), NA, max(pnbnp_result, na.rm = TRUE)),
+    bnp_summary = ifelse(any(bnp_summary == "Yes", na.rm = TRUE), "Yes", 
+                         ifelse(any(bnp_summary == "No", na.rm = TRUE), "No", 
+                                NA)),
+    
+    hba1c_result = ifelse(all(is.na(hba1c_result)), NA, max(hba1c_result, na.rm = TRUE)),
+    hba1c_summary = ifelse(any(hba1c_summary  == "Yes", na.rm = TRUE), "Yes", 
+                           ifelse(any(hba1c_summary  == "No", na.rm = TRUE), "No", 
+                                  NA)),
+    
+    egfr_result = ifelse(all(is.na(egfr_result)), NA, max(egfr_result, na.rm = TRUE)),
+    egfr_summary = ifelse(any(egfr_summary == "Yes", na.rm = TRUE), "Yes", 
+                          ifelse(any(egfr_summary == "No", na.rm = TRUE), "No", 
+                                 NA)),
+    
+    ddi_result = ifelse(all(is.na(ddi_result)), NA, max(ddi_result, na.rm = TRUE)),
+    ddi_summary = ifelse(any(ddi_summary == "Yes", na.rm = TRUE), "Yes", 
+                         ifelse(any(ddi_summary == "No", na.rm = TRUE), "No", 
+                                NA)),
+    
+    crp_result = ifelse(all(is.na(crp_result)), NA, max(crp_result , na.rm = TRUE)),
+    crp_summary = ifelse(any(crp_summary  == "Yes", na.rm = TRUE), "Yes", 
+                         ifelse(any(crp_summary == "No", na.rm = TRUE), "No", 
+                                NA)),
+  ) %>% 
+  ff_relabel_df(phosp)
+```
+
+
+```{r}
+# Make data object for table
+data_in = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  filter(redcap_event_name == "3 Months (1st Research Visit)" |
+           redcap_event_name == "12 Months (2nd Research Visit)") %>% 
+  
+  # Fix symptoms
+  mutate(
+    across(psq_scale,  ~ if_else(. >= 3, ">=3", "<3")),
+    across(c(neuro, musculoskeletal, cardiorespiratory, gastrointestinal_genitourinary, psq), ~ if_else(. == "Yes", "Yes", "No")),
+    psq_tinnitus_since = case_when(
+      psq_tinnitus_since %in% c("Yes, most or all of the time", 
+                                "Yes, a lot of the time", 
+                                "Yes, some of the time") ~ "Yes",
+      is.na(psq_tinnitus_since) ~ NA_character_,
+      TRUE ~ "No"
+    )
+  ) %>% 
+  
+  # Add baseline
+  select(-baseline) %>% 
+  left_join(phosp_hosp %>% select(study_id, 
+                                  baseline)) %>% 
+
+  
+  select(-starts_with("pft")) %>% 
+  left_join(phosp_pft_table) %>% 
+  
+  select(-c("wt_distance")) %>% 
+  left_join(phosp_wt_table) %>% 
+  
+  select(-bloods) %>% 
+  left_join(phosp_bloods_table) %>% 
+  
+  
+  
+  mutate( 
+    age_admission = ff_label(age_admission, "Age (years)"),
+    age_admission_factor = fct_relevel(age_admission_factor, "<30", "30-39", "40-49"),
+    redcap_event_name = fct_recode(redcap_event_name,
+                                        "3M" = "3 Months (1st Research Visit)",
+                                        "12M" = "12 Months (2nd Research Visit)")) %>% 
+  ff_relabel_df(phosp)
+```
+
+## Table 1
+
+```{r}
+dependent = "psq_recovered"
+split = "redcap_event_name"
+# Table of counts
+data_in %>% 
+  mutate(redcap_event_name = fct_drop(redcap_event_name)) %>% 
+  summary_factorlist(dependent, split, colum = FALSE, total_col = TRUE, add_dependent_label = TRUE) %>% 
+  mykable()
+```
+
+## Table 2
+
+```{r}
+# Make ginormous table
+
+explanatory = c(baseline,
+                
+                "gad7_summary_2levels",
+                "phq9_summary_2levels",
+                "pcl5_summary_2levels",
+                "dyspnoea12_summary",
+                #"facit_v4_summary",
+                "facit_item_total",
+                "bpi_severity_summary",
+                "bpi_interference_summary",
+                "sppb_score",
+                "sppb_score_summary",
+                "wt_distance",
+                "wt_iswt_predicted_perc",
+                "rcf_score_summary",
+                "mocal_total_summary",
+                "mocal_total_corrected_summary",
+                
+                all_symptoms,
+                
+                pfts,
+                
+                bloods,
+                
+                eq5d
+                
+)
+dependent = "psq_recovered"
+split = "redcap_event_name"
+
+data_in %>%
+  group_by(!!! syms(split)) %>% # Looks awkward, but avoids unquoted var names
+  group_modify(~ summary_factorlist(.x, dependent, explanatory, 
+                                    total_col = TRUE, add_row_totals = TRUE,
+                                    include_row_totals_percent = TRUE,
+                                    include_row_missing_col = FALSE) %>% ff_remove_ref()) %>% 
+  pivot_wider(names_from = "redcap_event_name", values_from = c(`Total N`, "Yes", "No", "Not sure", "Total")) %>% 
+  mykable()
+```
+
+
+# Recreate using matched EQ5D
+
+```{r}
+# Load data
+load("full_image_210621_first_paper.Rdata")
+```
+
+```{r}
+# Study id of patients with both 3 month and 12 month psq_recovered
+study_id_3m_12m_psq_recovered = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  filter(redcap_event_name %in% c("3 Months (1st Research Visit)", "12 Months (2nd Research Visit)")) %>% 
+  select(study_id, redcap_event_name, psq_recovered, eq5d5l_q1) %>% 
+  #drop_na(psq_recovered) %>% 
+  drop_na(eq5d5l_q1) %>% 
+  count(study_id) %>% 
+  filter(n == 2) %>% 
+  pull(study_id)
+```
+
+
+```{r}
+# Filter at 240 days follow up. 
+study_id_240 = phosp %>% 
+  group_by(study_id) %>% 
+  fill(crf1a_date_dis, crf3a_visit_date, .direction = "downup") %>% 
+  select(study_id, crf1a_date_dis, crf3a_visit_date) %>% 
+  distinct(study_id, .keep_all = TRUE) %>% 
+  mutate(discharge2review = (crf3a_visit_date - crf1a_date_dis) %>% as.numeric()) %>% 
+  filter(discharge2review <= 240 | is.na(discharge2review)) %>% 
+  pull(study_id)
+```
+
+```{r}
+# This defines the patients retained
+## Currently n = 283
+keep = phosp_hosp %>% 
+  filter(tier == 2) %>% 
+  filter(study_id %in% study_id_3m_12m_psq_recovered) %>% 
+  filter(study_id %in% study_id_240) %>% 
+  drop_na(crf1a_resp_support_4levels) %>% 
+  filter(!is.na(crf1a_sex)) %>% 
+  filter(study_id != "28-31") %>% # Temp remove as no 3 m data coming through
+  pull(study_id)
+
+phosp = phosp %>% 
+  filter(study_id %in% keep)
+```
+
+```{r}
+# Set up EQ5D trajectories, probably joins easiest
+## Set pre-COVID q1 to q5.
+## Going to work with date instrument completed, so will not fill a missing question from another time point. 
+## Therefore, work on assumption that if q1 non-missing, this is the event to use. 
+phosp_eq5d_baseline = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_pre_numeric")) %>% 
+
+    # Arrange events in the order of priority for extracting pre-covid status
+  mutate(
+    redcap_event_name = fct_relevel(redcap_event_name,
+                                   "3 Months (1st Research Visit)",
+                                   "Add. Planned Clinical Visits",
+                                   "6 Weeks",
+                                   "12 Months (2nd Research Visit)",
+                                   "Unscheduled")
+  ) %>% 
+  arrange(redcap_event_name) %>% 
+  
+  # Now take the first non-missing row
+  drop_na(eq5d5l_q1_pre_numeric) %>% 
+  group_by(study_id) %>% 
+  slice(1) %>% 
+  
+  # Add in admission date which is what we will consider the baseline to be from
+  left_join(phosp %>% select(study_id, crf1a_date_adm, crf1a_date_first_symptoms) %>% 
+              # This fills missing admin date with symptom onset date, but doesn't do much at the moment
+              # Left as coudl substitute another date. 
+              mutate(crf1a_date_adm = coalesce(crf1a_date_adm, crf1a_date_first_symptoms)) %>% 
+              drop_na()
+  ) %>% 
+  select(-crf1a_date_first_symptoms, -redcap_event_name) 
+```
+
+
+## Alluvial plot
+
+```{r}
+library(ggalluvial)
+alluvial_data = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_numeric")) %>% 
+  drop_na(eq5d5l_q1_numeric) %>% 
+  bind_rows(
+    phosp_eq5d_baseline %>% 
+  rename_with(~ gsub("pre_", "", .x)) %>% 
+  mutate(redcap_event_name = "Baseline") %>% 
+  select(-crf1a_date_adm)
+  ) %>% 
+  
+  # Up to now then we have row per patient-event and each eq5d at those events
+  ## Now make vertical factor for alluvial plot. 
+  
+  mutate(
+    eq5d5l_status = select(., matches("eq5d5l_[q12345]*_numeric")) %>% 
+      apply(1, function(.x){                                                                
+        case_when(
+          all(.x == 0) ~ "Perfect health",                                           
+          any(.x == 1) ~ "Any 1",
+          any(.x >= 2) ~ "Any 2+",
+          all(is.na(.x)) ~ NA_character_,
+          # TRUE ~  "Perfect health (missing 1+ domain)" # Very few here
+          TRUE ~  "Perfect health"
+        )
+      }
+      ) %>% 
+      factor() %>% 
+      fct_relevel("Perfect health", "Any 1", "Any 2+")
+  ) %>% 
+  select(-matches("eq5d5l_[q12345]*_numeric")) %>% 
+  pivot_wider(id_cols = study_id, names_from = redcap_event_name, values_from = eq5d5l_status) %>% 
+  select(-study_id)
+```
+
+n = `r dim(alluvial_data)[[1]]`
+
+```{r fig.height=8, fig.width=12}
+alluvial_data %>% 
+  select(-`6 Weeks`) %>% 
+  count(`Baseline`, `3 Months (1st Research Visit)`, `12 Months (2nd Research Visit)`) %>% 
+  ggforce::gather_set_data(., x = 1:(which(colnames(.)=="n")-1), id="alluvium") %>%
+  dplyr::mutate(project = factor(x, levels = unique(x)),
+                strata = factor(y, levels = unique(y))) %>% 
+  # select only essential columns
+  dplyr::select(project, strata, n, alluvium) %>%
+  
+  # plot data
+  ggplot() +
+  aes(x = project, y = n, alluvium = alluvium, stratum = strata, fill = strata, label = strata) +
+  ggalluvial::geom_flow(stat = "alluvium", lode.guidance = "rightleft", aes.flow = "forward", colour = "black",
+                        alpha = 0.6) +
+  ggalluvial::geom_stratum(alpha = 0.6, colour = "black") +
+  geom_text(stat = "stratum", size = 4, fontface = 2) +
+  scale_x_discrete("", labels = c("Baseline", "3 months", "12 months")) +
+  scale_y_continuous(name = "Total Number of Patients") +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_classic(base_size = 18) + guides(fill=FALSE) +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.line=element_blank())
+```
+
+
+
+```{r}
+# EQ5D change variable for phosp
+# This is similar to alluvial data above, but made at a different time, so haven't gone 
+# back and changed. 
+
+phosp_eq5d = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  filter(redcap_event_name != "6 Weeks") %>% 
+  select(study_id, redcap_event_name, matches("eq5d5l_[q12345]*_numeric")) %>% 
+  drop_na(eq5d5l_q1_numeric) %>% 
+  bind_rows(
+    phosp_eq5d_baseline %>% 
+      rename_with(~ gsub("pre_", "", .x)) %>% 
+      mutate(redcap_event_name = "Baseline") %>% 
+      select(-crf1a_date_adm)
+  ) %>% 
+  
+  mutate(
+    eq5d5l_status = select(., matches("eq5d5l_[q12345]*_numeric")) %>% 
+      apply(1, function(.x){                                                                
+        case_when(
+          all(.x == 0) ~ 0,                                           
+          any(.x >= 1) ~ 1,
+          all(is.na(.x)) ~ NA_real_,
+          # TRUE ~  "Perfect health (missing 1+ domain)" # Very few here
+          TRUE ~  0
+        )
+      }
+      ),
+    redcap_event_name = factor(redcap_event_name) %>% 
+      fct_recode(
+        "X3" = "3 Months (1st Research Visit)",
+        "X12" = "12 Months (2nd Research Visit)",
+        "X0" = "Baseline")
+  ) %>% 
+  select(study_id, redcap_event_name, eq5d5l_status) %>% 
+    pivot_wider(names_from = "redcap_event_name", values_from = "eq5d5l_status") %>% 
+  mutate(
+    eq5dl_change = case_when(
+      X0 == 0 & X3 == 0 & X12 == 0 ~ "Always perfect (0 0 0)",
+      X0 == 0 & X3 == 1 & X12 == 0 ~ "Perfect worse perfect (0 1 0)",
+      X0 == 1 & X3 == 1 & X12 == 1 ~ "Always not perfect (1 1 1)",
+      X0 == 0 & X3 == 1 & X12 == 1 ~ "Perfect worse worse (0 1 1)",
+      TRUE ~ NA_character_
+    )
+  )
+    
+```
+
+## Table 3
+
+```{r}
+phosp_eq5d %>% 
+  count(eq5dl_change) %>% 
+  mykable()
+```
+
+## Table 4
+
+```{r}
+# Make data object for table
+data_in = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  filter(redcap_event_name == "3 Months (1st Research Visit)" |
+           redcap_event_name == "12 Months (2nd Research Visit)") %>% 
+  
+  # Fix symptoms
+  mutate(
+    across(psq_scale,  ~ if_else(. >= 3, ">=3", "<3")),
+    across(c(neuro, musculoskeletal, cardiorespiratory, gastrointestinal_genitourinary, psq), ~ if_else(. == "Yes", "Yes", "No")),
+    psq_tinnitus_since = case_when(
+      psq_tinnitus_since %in% c("Yes, most or all of the time", 
+                                "Yes, a lot of the time", 
+                                "Yes, some of the time") ~ "Yes",
+      is.na(psq_tinnitus_since) ~ NA_character_,
+      TRUE ~ "No"
+    )
+  ) %>% 
+  
+  # Add baseline
+  select(-baseline) %>% 
+  left_join(phosp_hosp %>% select(study_id, 
+                                  baseline)) %>% 
+
+  
+  select(-starts_with("pft")) %>% 
+  left_join(phosp_pft_table) %>% 
+  
+  select(-c("wt_distance")) %>% 
+  left_join(phosp_wt_table) %>% 
+  
+  select(-bloods) %>% 
+  left_join(phosp_bloods_table) %>% 
+  
+  left_join(phosp_eq5d %>% select(study_id, eq5dl_change)) %>% 
+  
+  mutate( 
+    age_admission = ff_label(age_admission, "Age (years)"),
+    age_admission_factor = fct_relevel(age_admission_factor, "<30", "30-39", "40-49"),
+    redcap_event_name = fct_recode(redcap_event_name,
+                                        "3M" = "3 Months (1st Research Visit)",
+                                        "12M" = "12 Months (2nd Research Visit)")) %>% 
+  ff_relabel_df(phosp)
+```
+
+
+```{r}
+data_in = data_in %>% 
+  filter(redcap_event_name == "3M")
+
+
+dependent = "eq5dl_change"
+split = "redcap_event_name"
+
+# Table of counts
+data_in %>% 
+  mutate(redcap_event_name = fct_drop(redcap_event_name)) %>% 
+  summary_factorlist(dependent, split, colum = FALSE, total_col = TRUE, add_dependent_label = TRUE) %>% 
+  mykable()
+```
+
+## Table 5
+
+```{r}
+# Make ginormous table  
+explanatory = c(baseline,
+                
+                "gad7_summary_2levels",
+                "phq9_summary_2levels",
+                "pcl5_summary_2levels",
+                "dyspnoea12_summary",
+                #"facit_v4_summary",
+                "facit_item_total",
+                "bpi_severity_summary",
+                "bpi_interference_summary",
+                "sppb_score",
+                "sppb_score_summary",
+                "wt_distance",
+                "wt_iswt_predicted_perc",
+                "rcf_score_summary",
+                "mocal_total_summary",
+                "mocal_total_corrected_summary",
+                
+                all_symptoms,
+                
+                pfts,
+                
+                bloods,
+                
+                eq5d
+                
+)
+dependent = "eq5dl_change"
+
+data_in %>%
+  summary_factorlist(dependent, explanatory, 
+                                    total_col = TRUE, add_row_totals = TRUE,
+                                    include_row_totals_percent = TRUE,
+                                    include_row_missing_col = FALSE) %>% 
+  ff_remove_ref() %>% 
+  mykable()
+```
+

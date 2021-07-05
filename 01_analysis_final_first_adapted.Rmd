@@ -2,7 +2,8 @@
 title: "PHOSP-COVID report"
 author: "PHOSP-COVID collaborative"
 output:
-  word_document
+  word_document:
+    reference_docx: template.docx 
 ---
 
 ```{r setup, include=FALSE}

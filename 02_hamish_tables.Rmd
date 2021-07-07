@@ -1,0 +1,300 @@
+---
+title: "Hamish tables"
+author: "PHOSP-COVID collaborative"
+output:
+  word_document:
+    reference_docx: template.docx 
+---
+
+```{r setup, include=FALSE}
+library(finalfit)
+library(knitr)
+library(tidyverse)
+library(purrr)
+library(rmarkdown)
+
+summary_factorlist <- purrr::partial(finalfit::summary_factorlist, na_to_prop = FALSE)
+
+
+mykable = function(x, row.names = FALSE){
+    knitr::kable(x, row.names = row.names, align = c("l", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r")) 
+}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE)
+```
+
+```{r}
+# Only run once for each new data pull
+library(readr) # loaded with tidyverse anyway
+
+# Use the phosp_clean dataset in safe haven
+
+datadir = "/home/common/phosp/cleaned/full/"
+timestamp = "2021-07-07_0400"
+phosp   = read_rds(paste0(datadir, "phosp_", timestamp, "_full.rds")) # Use a version of phosp.rds here. 
+```
+
+
+Some of the labels that come from REDCap are long. Adjust these here. 
+
+e.g.  Age at Admission (Years)Please enter date of birth (CRF0) and date of admission (CRF1A) to calculate.
+
+```{r}
+# Label changes
+phosp = phosp %>% 
+  mutate(
+    age_admission = ff_label(age_admission, "Age (years)"),
+    patient_sq_q_today = ff_label(patient_sq_q_today, "Occupation")
+  )
+```
+
+Fix variables here
+
+```{r}
+# This replaces the variable on the left with the one on the right if missing.
+## It looks a bit complicated, but is just an ifelse applied very efficiently
+
+vars = c("patient_sq_l_b_seeing" = "patient_sq_l_b_seeing2",
+         "patient_sq_l_b_hearing" = "patient_sq_l_b_hearing2",
+         "patient_sq_l_b_walking" = "patient_sq_l_b_walking2",
+         "patient_sq_l_b_remembering" = "patient_sq_l_b_remembering2",
+         "patient_sq_l_b_self_care" = "patient_sq_l_b_self_care2",
+         "patient_sq_l_b_communicate"= "patient_sq_l_b_communicate2",
+         
+         "psq_scale_blness_pre" = "psq_scale_blness_pre2",
+         "psq_scale_cough_pre" = "psq_scale_cough_pre2",
+         "psq_scale_fatigue_pre" = "psq_scale_fatigue_pre2",
+         "psq_scale_sleep_pre" = "psq_scale_sleep_pre2",
+         "psq_scale_pain_pre" = "psq_scale_pain_pre2"
+)
+
+expressions = imap(vars, ~ expr(if_else(is.na(!! sym(.y)), !! sym(.x), !! sym(.y))))
+
+phosp = phosp %>%
+  mutate(!!! expressions) %>% 
+  ff_relabel_df(phosp)
+```
+
+
+
+## Table 1
+
+Given that this is unpaired data, easiest just to make two separate tables and column-bind them. 
+
+Will do this all from the main large phosp object.
+
+```{r}
+# I'm making phosp_hosp here, but if you have run the cleaning scripts above, this is not required
+# You can start from here using the phosp_clean dataset. 
+
+phosp_hosp = phosp %>% 
+  filter(redcap_event_name == "Hospital Discharge") %>% # Select only baseline data
+  filter(is.na(redcap_repeat_instance)) %>%  # Remove repeat instruments, bloods, PFTs etc. 
+  filter(tier == 2) %>%                      # Tier 2 only
+  purrr::discard(~all(is.na(.)))             # Remove empty columns
+
+phosp_3m = phosp %>% 
+  filter(redcap_event_name == "3 Months (1st Research Visit)") %>% # Select only 3 month data
+  filter(is.na(redcap_repeat_instance)) %>%  # Remove repeat instruments, bloods, PFTs etc. 
+  filter(tier == 2) %>%                      # Tier 2 only
+  purrr::discard(~all(is.na(.)))             # Remove empty columns
+
+phosp_12m = phosp %>% 
+  filter(redcap_event_name == "12 Months (2nd Research Visit)") %>% # Select only 12 month data
+  filter(is.na(redcap_repeat_instance)) %>%  # Remove repeat instruments, bloods, PFTs etc. 
+  filter(tier == 2)  %>%                     # Tier 2 only
+  purrr::discard(~all(is.na(.)))             # Remove empty columns
+```
+
+There are variables only available at baseline. Commonly used variables that don't change over time have been copied, through. 
+Such as age and sex should appear in all instances, 3m, 12m etc. 
+
+For these tables, they are mostly baseline variables with a smaller number of 3m and 12m. 
+
+It is easier therefore to just join the relevant 3m / 12m variables back to phosp_hosp, which is baseline. I'll do that throughout.
+
+
+```{r}
+# Variables to present
+explanatory = c("age_admission", 
+             "age_admission_factor",
+             "crf1a_sex", 
+             "crf1b_eth_5levels", 
+             
+             # Occupation from 3m / 12m
+             "patient_sq_q_today",
+             
+             # Healthcare worker from baseline
+             "crf1b_healthcare_worker",
+             
+             "imd_quintile",
+             "crf3a_bmi",
+             "crf3a_bmi_2levels",
+             "crf3a_bmi_5levels", 
+             
+             "patient_sq_n",
+             
+             # Comorbidities
+             "no_comorbid",
+             "no_comorbid_3levels",
+             "crf1a_com_card", 
+             "crf1a_com_mer",
+             "crf1a_com_res",
+             "crf1a_com_diab",
+             
+             "crf1a_com_rheu",
+             "crf1a_com_gast", 
+             "crf1a_com_neupsy",
+             "crf1a_com_mh", 
+             "crf1a_com_id",
+             
+             
+             "crf1a_admission_duration",
+             
+             "crf1a_treat_ss", "crf1a_treat_at", "crf1a_treat_tdac")
+```
+
+
+```{r}
+t1a = phosp_3m %>% 
+  select(study_id, psq_recovered, patient_sq_q_today, patient_sq_n,
+         crf3a_bmi, crf3a_bmi_2levels, crf3a_bmi_5levels, ) %>%  # take only what you need from 3m, including study_id
+  left_join(phosp_hosp) %>% 
+  summary_factorlist("psq_recovered", explanatory,
+                     na_include = TRUE, na_include_dependent = TRUE,
+                     total_col = TRUE,
+                     add_col_totals = TRUE,
+                     add_row_totals = TRUE, include_row_missing_col = FALSE, p = TRUE) %>% 
+  relocate(           # Re-jig to join
+    label = label,
+    levels = levels,
+    `Total N (3M)` = `Total N`)
+
+
+t1b = phosp_12m %>% 
+  select(study_id, psq_recovered, patient_sq_q_today, patient_sq_n,
+         crf3a_bmi, crf3a_bmi_2levels, crf3a_bmi_5levels, ) %>%  # take only what you need from 3m, including study_id
+  left_join(phosp_hosp) %>% 
+  summary_factorlist("psq_recovered", explanatory,
+                     na_include = TRUE, na_include_dependent = TRUE,
+                     total_col = TRUE,
+                     add_col_totals = TRUE,
+                     add_row_totals = TRUE, include_row_missing_col = FALSE, p = TRUE) %>% 
+    relocate(           # Re-jig to join
+    label = label,
+    levels = levels,
+    `Total N (12M)` = `Total N`)
+```
+
+```{r}
+bind_cols(t1a, 
+          t1b[,3:9],
+          .name_repair = c("minimal")) %>% 
+  mykable() # Danger danger, not labelling 12 months specifically. 
+```
+
+
+
+
+
+
+## Table 2
+
+This is more difficult because the variables come from different.
+
+Again, do these in 3 separate steps. The pre data will just come from 3 months for now. 
+
+
+```{r}
+explanatory_pre = c("eq5d5l_summary_pre",
+                    "eq5d5l_q1_pre",
+                    "eq5d5l_q2_pre",
+                    "eq5d5l_q3_pre",
+                    "eq5d5l_q4_pre",
+                    "eq5d5l_q5_pre",
+                    
+                    "patient_sq_l_b_seeing",
+                    "patient_sq_l_b_hearing",
+                    "patient_sq_l_b_walking",
+                    "patient_sq_l_b_remembering",
+                    "patient_sq_l_b_self_care",
+                    "patient_sq_l_b_communicate",
+                    
+                    "psq_scale_blness_pre",
+                    "psq_scale_cough_pre",
+                    "psq_scale_fatigue_pre",
+                    "psq_scale_sleep_pre",
+                    "psq_scale_pain_pre"
+                    
+)
+
+explanatory_current = c("eq5d5l_summary",
+                        "eq5d5l_q1",
+                        "eq5d5l_q2",
+                        "eq5d5l_q3",
+                        "eq5d5l_q4",
+                        "eq5d5l_q5",
+                        
+                        "patient_sq_l_t_seeing",
+                        "patient_sq_l_t_hearing",
+                        "patient_sq_l_t_walking",
+                        "patient_sq_l_t_remembering",
+                        "patient_sq_l_t_self_care",
+                        "patient_sq_l_t_communicate",
+                        
+                        "psq_scale_blness_since",
+                        "psq_scale_cough_since",
+                        "psq_scale_fatigue_since",
+                        "psq_scale_sleep_since",
+                        "psq_scale_pain_since"
+)
+
+
+t2_pre = phosp_3m %>%
+  summary_factorlist(dependent = NULL,  explanatory_pre,
+                     na_include = TRUE, na_include_dependent = TRUE,
+                     add_col_totals = TRUE,
+                     add_row_totals = TRUE, include_row_missing_col = FALSE) %>% 
+  relocate(
+    label = label,
+    levels = levels,
+    `Total N (pre)` = `Total N`,
+     "Pre-hospitalisation" = "all")
+
+t2_3m = phosp_3m %>%
+  summary_factorlist(dependent = NULL,  explanatory_current,
+                     na_include = TRUE, na_include_dependent = TRUE,
+                     add_col_totals = TRUE,
+                     add_row_totals = TRUE, include_row_missing_col = FALSE) %>% 
+    relocate(
+    label = label,
+    levels = levels,
+    `Total N (3M)` = `Total N`,
+     "3 month" = "all")
+  
+
+t2_12m = phosp_12m %>%
+  summary_factorlist(dependent = NULL,  explanatory_current,
+                     na_include = TRUE, na_include_dependent = TRUE,
+                     add_col_totals = TRUE,
+                     add_row_totals = TRUE, include_row_missing_col = FALSE) %>% 
+    relocate(
+    label = label,
+    levels = levels,
+    `Total N (12 month)` = `Total N`,
+     "12 month" = "all")
+```
+
+```{r}
+bind_cols(t2_pre,
+          t2_3m[, c(3,4)],
+          t2_12m[, c(3,4)]) %>% 
+  mykable()
+```
+
+
+
+
+

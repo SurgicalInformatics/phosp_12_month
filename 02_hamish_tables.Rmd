@@ -295,6 +295,35 @@ bind_cols(t2_pre,
 ```
 
 
+## For paired data
+
+Just get the study id of patients with data in both instruments. The easiest way to do this is to choose a variable that needs to be present in both events, like psq_recovered. That will drop the missings for that variable though
+
+e.g.
+
+```{r}
+# Study id of patients with both 3 month and 12 month psq_recovered
+study_id_3m_12m_psq_recovered = phosp %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
+  filter(redcap_event_name %in% c("3 Months (1st Research Visit)", "12 Months (2nd Research Visit)")) %>% 
+  select(study_id, redcap_event_name, psq_recovered) %>% 
+  drop_na(psq_recovered) %>% 
+  count(study_id) %>%  # Only study_id that is included twice, i.e. at 3 month and 12 month is kept with the next row. 
+  filter(n == 2) %>% 
+  pull(study_id)
+```
+
+Now use this to filter the above objects, and run the tables exactly the same way. 
+
+e.g.
+
+```{r}
+phosp_3m_paired = phosp_3m %>% 
+  filter(study_id %in% study_id_3m_12m_psq_recovered)
+
+phosp_12m_paired = phosp_12m %>% 
+  filter(study_id %in% study_id_3m_12m_psq_recovered)
+```
 
 
 

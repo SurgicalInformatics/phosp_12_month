@@ -33,7 +33,7 @@ library(readr) # loaded with tidyverse anyway
 
 datadir = "/home/common/phosp/cleaned/full/"
 timestamp = "2021-07-07_0400"
-phosp   = read_rds(paste0(datadir, "phosp_", timestamp, "_full.rds")) # Use a version of phosp.rds here. 
+phosp   = read_rds(paste0(datadir, "phosp_", timestamp, "_full.rds")) # Use a version of phosp_clean.rds here. 
 ```
 
 
@@ -202,7 +202,7 @@ bind_cols(t1a,
 
 ## Table 2
 
-This is more difficult because the variables come from different.
+This is more difficult because the variables come from different events and instruments.
 
 Again, do these in 3 separate steps. The pre data will just come from 3 months for now. 
 

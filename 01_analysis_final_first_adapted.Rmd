@@ -28,18 +28,18 @@ knitr::opts_chunk$set(echo = FALSE,
 # Only run once for each new data pull
 library(readr) # loaded with tidyverse anyway
 datadir = "/home/common/phosp/raw/"
-timestamp = "2021-06-21_1001"
+timestamp = "2021-07-07_0400"
 phosp   = read_rds(paste0(datadir, "phosp_", timestamp, ".rds"))
 lastrun = Sys.time()
 source("/home/eharrison/phosp_clean/02_functions.R")
 source("/home/eharrison/phosp_clean/03_prep.R")
 source("/home/eharrison/phosp_clean/05_kco.R")
-save.image("full_image_210621_first_paper.Rdata", compress = TRUE)
+save.image("full_image_070721_first_paper.Rdata", compress = TRUE)
 ```
 
 ```{r}
 # Load data
-load("full_image_210621_first_paper.Rdata")
+load("full_image_070721_first_paper.Rdata")
 ```
 
 ```{r}
@@ -358,7 +358,7 @@ data_in %>%
 
 ```{r}
 # Load data
-load("full_image_210621_first_paper.Rdata")
+load("full_image_070721_first_paper.Rdata")
 ```
 
 ```{r}

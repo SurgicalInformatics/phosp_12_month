@@ -42,7 +42,7 @@ summary_factorlist_stratified <- function(.data, ..., split, colname_sep = "|", 
 }
 
 mykable = function(x, row.names = FALSE){
-    knitr::kable(x, row.names = row.names, align = c("l", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r")) 
+  knitr::kable(x, row.names = row.names, align = c("l", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r")) 
 }
 
 knitr::opts_chunk$set(echo = TRUE,
@@ -53,24 +53,42 @@ source("/home/eharrison/phosp_clean/02_functions.R")
 
 
 ```{r eval=FALSE, include=FALSE}
-# Use the phosp_clean dataset in data store
-timestamp = "2021-07-27_0400"
+# Run once
+
+# Find most recent date
+# datadir = "/home/common/phosp/cleaned/full/"
+# file_names = list.files(datadir, pattern="^phosp_hosp")
+# timestamp = str_match(file_names, "phosp_hosp_([1234567890\\-_]*)")[,2] %>%
+#   lubridate::ymd_hm() %>%
+#   max() %>%
+#   format("%Y-%m-%d_%H%M")
+
+timestamp = "2021-09-08_1203"
+# timestamp = "2021-09-03_1550"
+# timestamp = "2021-07-27_0400"
+# timestamp = "2021-08-16_0400"
 # datadir = "/home/common/phosp/cleaned/full/"
 # phosp   = read_rds(paste0(datadir, "phosp_", timestamp, "_full.rds")) # Use a version of phosp_clean.rds here.
 datadir = "/home/common/phosp/raw/"
 phosp   = read_rds(paste0(datadir, "phosp_", timestamp, ".rds")) # Use a version of phosp_clean.rds here. 
 source("/home/eharrison/phosp_clean/03_prep.R") # After moving 3 month pre eq5d throughout
 source("/home/eharrison/phosp_clean/05_kco.R") 
+source("/home/eharrison/phosp_clean/06_truecolours_merge.R")
 saveRDS(phosp, paste0("phosp_", timestamp, ".rds"))
 saveRDS(phosp_wt, paste0("phosp_wt_", timestamp, ".rds"))
 saveRDS(phosp_kco, paste0("phosp_kco_", timestamp, ".rds"))
+saveRDS(phosp_tc, paste0("phosp_tc_", timestamp, ".rds"))
 ```
 
 ```{r}
-timestamp = "2021-07-27_0400"
+# timestamp = "2021-07-27_0400"
+# timestamp = "2021-08-16_0400"
+# timestamp = "2021-09-03_1550"
+timestamp = "2021-09-08_1203"
 phosp = readRDS(paste0("phosp_", timestamp, ".rds"))
 phosp_wt = readRDS(paste0("phosp_wt_", timestamp, ".rds"))
 phosp_kco = readRDS(paste0("phosp_kco_", timestamp, ".rds"))
+phosp_tc = readRDS(paste0("phosp_tc_", timestamp, ".rds"))
 ```
 
 Latent process mixed models. A dynamic phenomenon (like recovery) can be characterized by a latent process which evolves over time. A latent process like recovery can be measured through several instruments, and the latent process (or construct) is their common factor. 
@@ -86,6 +104,78 @@ phosp_working = phosp %>%
   filter(tier == 2)
 ```
 
+## True Colours
+```{r}
+# Match TC to 3 and 12 months
+## The prep file for TC removes TC done on same day. 
+## But there are still multiple TC questionnaires that match +/- 28 days
+
+explanatory_hrqol = c(
+  "gad7_summary",
+  "phq9_summary",
+  "pcl5_summary",
+  "dyspnoea12_summary",
+  "facit_item_total"
+)
+
+explanatory_tc = c(
+  "gad7_summary_tc",
+  "phq9_summary_tc",
+  "pcl5_summary_tc",
+  "d12_summary_tc",
+  "facit_v4_summary_tc"
+)
+
+phosp_tc_match = phosp_working %>% 
+  left_join(phosp_tc %>% 
+              select(study_id, 
+                     date_tc,
+                     all_of(explanatory_tc)), by = "study_id") %>% 
+  # Difference between clinic visit and TC
+  mutate(date_tc_delta = (date_tc - crf3b_date_visit) %>% as.numeric()) %>% 
+  # relocate(study_id, redcap_event_name, crf3b_date_visit, date_tc, date_tc_delta) %>% # tmp to manually inspect
+  # Keep +/- 28 days
+  filter(
+    (date_tc_delta >= 0 & date_tc_delta <= 28) |
+      (date_tc_delta < 0 & date_tc_delta >= -28)
+  ) %>% 
+  mutate(
+    gad7_summary = if_else(is.na(gad7_summary), gad7_summary_tc, gad7_summary),
+    phq9_summary = if_else(is.na(phq9_summary), phq9_summary_tc, phq9_summary),
+    pcl5_summary = if_else(is.na(pcl5_summary), pcl5_summary_tc, pcl5_summary),
+    dyspnoea12_summary = if_else(is.na(dyspnoea12_summary), d12_summary_tc, dyspnoea12_summary),
+    facit_item_total = if_else(is.na(facit_item_total), facit_v4_summary_tc, facit_item_total)
+  ) %>% 
+  # Check at this point
+  # select(study_id, redcap_event_name, crf3b_date_visit, date_tc, date_tc_delta,
+  #        all_of(explanatory_tc), all_of(explanatory_hrqol))
+  
+  # More than one TC match for a given clinic, take earlier
+  arrange(study_id, date_tc) %>% 
+  group_by(study_id) %>% 
+  slice(1) %>% 
+  
+  # This selection should match variable number with phosp_working
+  select(-c(date_tc, date_tc_delta, explanatory_tc))
+# 2421 variables in both phosp_tc_match and phosp_working
+
+# Finish by replacing these patients in phosp_working
+phosp_tc_match_study_id_event = phosp_tc_match %>% 
+  mutate(drop = paste0(study_id, crf3b_date_visit)) %>% 
+  pull(drop)
+
+phosp_working_tc_match = phosp_working %>% 
+  mutate(drop = paste0(study_id, crf3b_date_visit)) %>% 
+  filter(!drop %in% phosp_tc_match_study_id_event) %>% 
+  select(-drop) %>% 
+  bind_rows(phosp_tc_match)
+# Check this match row total for phosp_working
+# 3361 x 2421
+
+phosp_working = phosp_working_tc_match %>% 
+  ff_relabel_df(phosp_working)
+rm(phosp_working_tc_match, phosp_tc_match)
+```
 
 ## Make variables
 ```{r}
@@ -106,7 +196,6 @@ phosp = phosp %>%
        .direction = "downup") %>% 
   ungroup()
 ```
-
 
 
 ## Error checking
@@ -134,10 +223,6 @@ explanatory_hrqol = c(
 ## Make a pairs upset plot
 
 This is set up to show sets of complete data across 3 and 12 month instruments. 
-
-353 complete cases. An extra 81 if complete moca not required etc. 
-
-I think I misled earlier, all patients in clustering analysis have complete data (1503) and 353 have paired data between 3 and 12 months. To utilise more pairs, either a variable such as moca would have to be dropped from the cluster, or missing moca imputed. 
 
 ```{r fig.height=4, fig.width=8}
 # Patients with both 3 and 12 month data
@@ -238,7 +323,7 @@ phosp_working %>% select(sppb_score) %>% ff_glimpse
 phosp_imputed %>% mice::complete(1) %>% select(mocal_total) %>% ff_glimpse()
 phosp_imputed %>% mice::complete(1) %>% select(sppb_score) %>% ff_glimpse()
 
-# saveRDS(phosp_imputed, file = paste0("phosp_imputed", timestamp, ".rds"))
+saveRDS(phosp_imputed, file = paste0("phosp_imputed", timestamp, ".rds"))
 ```
 
 ```{r}
@@ -388,7 +473,7 @@ m1_beta = map(1, ~ multlcmm(fixed = gad7_summary + phq9_summary +
                          
                          maxiter = 100)
 )
-saveRDS(m1_beta, file = paste0("m1_beta_imputed1", timestamp, ".rds"))
+saveRDS(m1_beta, file = paste0("m1_beta_imputed_", timestamp, ".rds"))
 
 k = 2:6 %>% as.list()
 m2_beta = map(k, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
@@ -407,7 +492,7 @@ m2_beta = map(k, ~ multlcmm(fixed = gad7_summary + phq9_summary +
                          data = model_data,
                          maxiter = 100)
 )
-saveRDS(m2_beta, file = paste0("m2_beta_imputed1", timestamp, ".rds"))
+saveRDS(m2_beta, file = paste0("m2_beta_imputed_", timestamp, ".rds"))
 m_beta = c(m1_beta, m2_beta)
 ```
 
@@ -416,8 +501,8 @@ m_beta = c(m1_beta, m2_beta)
 # m2_beta = readRDS("m2_beta2.rds")
 # m_beta = c(m1_beta, m2_beta)
 
-m1_beta = readRDS(paste0("m1_beta_imputed1", timestamp, ".rds"))
-m2_beta = readRDS(paste0("m2_beta_imputed1", timestamp, ".rds"))
+m1_beta = readRDS(paste0("m1_beta_imputed_", timestamp, ".rds"))
+m2_beta = readRDS(paste0("m2_beta_imputed_", timestamp, ".rds"))
 m_beta = c(m1_beta, m2_beta)
 ```
 
@@ -700,8 +785,8 @@ phosp_m5 %>%
   geom_line(aes(group = `REDCap ID`), alpha = 0.1) + 
   scale_colour_brewer(palette = "Set1") +
   facet_wrap(. ~ name, scale = "free_y") +
-  # geom_smooth(se = FALSE, method = "gam") + 
-  geom_smooth(se = FALSE, method = "gam", formula = y ~ s(x, bs = "cr")) + 
+  geom_smooth(se = FALSE, method = "gam") + 
+  #geom_smooth(se = FALSE, method = "gam", formula = y ~ s(x, bs = "cr")) + 
   #geom_smooth(se = FALSE) + 
   labs(x = "Follow-up time (weeks after discharge)", colour = "Cluster") + 
   ggtitle("Patient trajectories classified by cluster")

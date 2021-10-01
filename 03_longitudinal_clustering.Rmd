@@ -1,5 +1,5 @@
 ---
-title: "Longitudinal clustering"
+title: "Longitudinal clustering - 4 clusters"
 author: "PHOSP-COVID collaborative"
 output:
   word_document:
@@ -326,6 +326,8 @@ phosp_imputed %>% mice::complete(1) %>% select(sppb_score) %>% ff_glimpse()
 saveRDS(phosp_imputed, file = paste0("phosp_imputed", timestamp, ".rds"))
 ```
 
+## Load imputed datasets
+
 ```{r}
 phosp_imputed = readRDS(paste0("phosp_imputed", timestamp, ".rds"))
 
@@ -497,10 +499,6 @@ m_beta = c(m1_beta, m2_beta)
 ```
 
 ```{r include=FALSE}
-# m1_beta = readRDS("m1_beta2.rds")
-# m2_beta = readRDS("m2_beta2.rds")
-# m_beta = c(m1_beta, m2_beta)
-
 m1_beta = readRDS(paste0("m1_beta_imputed_", timestamp, ".rds"))
 m2_beta = readRDS(paste0("m2_beta_imputed_", timestamp, ".rds"))
 m_beta = c(m1_beta, m2_beta)
@@ -611,6 +609,199 @@ m5_beta_all_imputed_class = m5_beta_all_imputed %>%
 
 ```
 
+
+
+
+
+
+## Linear models (try again with this 21/09)
+
+```{r eval=FALSE}
+library(lcmm)
+set.seed(1234)
+m1_linear = map(1, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
+                          pcl5_summary + dyspnoea12_summary + 
+                           facit_item_total + sppb_score + mocal_total ~ 
+                           
+                           time2fu, 
+                         random = ~ 1, #time2fu, 
+                         subject = "study_id2", 
+                         
+                         ng = .,
+                         link = 'linear',
+                         randomY = TRUE,
+                         data = model_data,
+                         
+                         maxiter = 100)
+)
+saveRDS(m1_linear, file = paste0("m1_linear_", timestamp, ".rds"))
+
+k = 2:6 %>% as.list()
+m2_linear = map(k, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
+                           pcl5_summary + dyspnoea12_summary + 
+                           facit_item_total + sppb_score + mocal_total ~ 
+                           
+                           time2fu, 
+                         mixture = ~ time2fu,
+                         random = ~ 1, #time2fu, 
+                         subject = "study_id2", 
+                         
+                         ng = .,
+                         link = 'linear',
+                         randomY = TRUE, 
+                         
+                         B = m1_linear[[1]], # Use ng = 1 model for initial values
+                         data = model_data,
+                         maxiter = 100)
+)
+saveRDS(m2_linear, file = paste0("m2_linear_", timestamp, ".rds"))
+m_linear = c(m1_linear, m2_linear)
+```
+
+```{r include=FALSE}
+m1_linear = readRDS(paste0("m1_linear_", timestamp, ".rds"))
+m2_linear = readRDS(paste0("m2_linear_", timestamp, ".rds"))
+m_linear = c(m1_linear, m2_linear)
+```
+
+```{r}
+t1 = summarytable(m_linear[[1]], m_linear[[2]], m_linear[[3]],
+             m_linear[[4]], m_linear[[5]], m_linear[[6]],
+             which =c( "G", "loglik", "conv", "npm",
+                       "AIC", "BIC", "SABIC", 
+                       "entropy", "ICL", "%class"),
+             display = FALSE) 
+
+tmp = t1 %>% 
+  as_data_frame() %>% 
+  rename("Number of clusters" = "G")
+```
+
+Choose model 4 that has 3 effective clusters. 
+
+```{r eval=FALSE, include=FALSE}
+m4 = m_linear[[4]]
+summary(m4)
+```
+
+```{r eval=FALSE, include=TRUE}
+# Model checks
+## Not printed. 
+plot(m4)
+plot(m4, which="linkfunction")
+plot(m4, which="postprob")
+plot(m4, which="link")
+plot(m4, which="fit", var.time = "time2fu")
+```
+
+## Run imputed sets for chosen number of clusters 
+
+```{r eval=FALSE}
+# Use all imputed sets
+model_data_imputed = phosp_imputed_sets %>% 
+  map(~ .x %>% 
+        select(study_id, study_id2, redcap_event_name, time2fu, explanatory_hrqol) %>% 
+       bind_rows(
+         phosp_working %>% # Bring back unpaired patients
+           select(study_id, study_id2, redcap_event_name, time2fu, explanatory_hrqol) %>% 
+           filter(!study_id %in% phosp_imputed_sets[[1]]$study_id)
+       ) %>% 
+        drop_na() %>%
+        recipe(~ .) %>% 
+        step_normalize(explanatory_hrqol) %>% 
+        prep() %>% 
+        juice() %>% 
+        mutate(across(c(mocal_total, sppb_score), ~ . * -1)) %>%     # Reverse scale for these
+        as.data.frame()
+  )
+# Check they match. 
+model_data_imputed[[1]] %>% arrange(study_id2, redcap_event_name) %>% head
+model_data %>% arrange(study_id2, redcap_event_name) %>% head
+
+set.seed(1234)
+# 10 sets of model 4 (3 effective clusters)
+m4_linear_all_imputed = model_data_imputed %>% 
+  map(~ multlcmm(fixed = gad7_summary + phq9_summary + 
+                   pcl5_summary + dyspnoea12_summary + 
+                   facit_item_total + sppb_score + mocal_total ~ 
+                   
+                   time2fu, 
+                 mixture = ~ time2fu,
+                 random = ~ 1, #time2fu, NOTE THIS CHANGE
+                 subject = "study_id2", 
+                 
+                 ng = 5,
+                 link = 'linear',
+                 randomY = TRUE, 
+                 
+                 B = m1_linear[[1]], # Use ng = 1 model for initial values
+                 data = .x,
+                 maxiter = 100)
+  )
+saveRDS(m4_linear_all_imputed, file = paste0("m5_linear_all_imputed", timestamp, ".rds"))
+```
+
+```{r}
+m3_linear_all_imputed = readRDS(paste0("m3_linear_all_imputed", timestamp, ".rds"))
+m4_linear_all_imputed = readRDS(paste0("m4_linear_all_imputed", timestamp, ".rds"))
+
+# CHOOSE HERE
+# m4_linear_all_imputed = m3_linear_all_imputed
+```
+
+```{r}
+# Metrics of models developed with imputed sets
+# 3 cluster model
+summarytable(m3_linear_all_imputed[[1]], m3_linear_all_imputed[[2]],
+             m3_linear_all_imputed[[3]], m3_linear_all_imputed[[4]],
+             m3_linear_all_imputed[[5]], m3_linear_all_imputed[[6]],
+             m3_linear_all_imputed[[7]], m3_linear_all_imputed[[8]],
+             m3_linear_all_imputed[[9]], m3_linear_all_imputed[[10]],
+             which =c( "G", "loglik", "conv", "npm",
+                       "AIC", "BIC", "SABIC", 
+                       "entropy", "ICL", "%class")) 
+
+# 4 cluster model
+summarytable(m4_linear_all_imputed[[1]], m4_linear_all_imputed[[2]],
+             m4_linear_all_imputed[[3]], m4_linear_all_imputed[[4]],
+             m4_linear_all_imputed[[5]], m4_linear_all_imputed[[6]],
+             m4_linear_all_imputed[[7]], m4_linear_all_imputed[[8]],
+             m4_linear_all_imputed[[9]], m4_linear_all_imputed[[10]],
+             which =c( "G", "loglik", "conv", "npm",
+                       "AIC", "BIC", "SABIC", 
+                       "entropy", "ICL", "%class")) 
+
+
+```
+
+
+```{r}
+# Mean of class probabilities across 10 imputed models
+m4_linear_all_imputed_class = m4_linear_all_imputed %>% 
+  # Extract matrices of class probabiliites
+  map(~ .x$pprob %>% 
+        select(-c(1, 2)) %>% 
+        as.matrix()
+  ) %>% 
+  # Take mean prob across imputed sets
+  Reduce('+', .) %>% 
+  {. / 10} %>% 
+  as.data.frame() %>% 
+  # Bring study_id2 back in. 
+  bind_cols(study_id2 = m4_linear_all_imputed[[1]]$pprob[, c(1)], 
+            .) %>% 
+  tibble() %>% 
+  # Pivot and retain highest probability
+  pivot_longer(matches("prob.+")) %>% 
+  group_by(study_id2) %>% 
+  slice_max(value) %>% 
+  mutate(class = str_extract(name, "[:digit:]")) %>% # Check here. 
+  ungroup()
+
+```
+
+
+
 ## Join clusters with other data
 
 ```{r}
@@ -701,6 +892,15 @@ phosp_m5 = phosp_m5 %>%
   )
 ```
 
+
+```{r}
+# Choose beta or linear
+# Comment out for beta
+m5_beta_all_imputed_class = m4_linear_all_imputed_class
+
+```
+
+
 ```{r}
 # Imputed example
 # Bring in baseline 
@@ -763,29 +963,32 @@ phosp_m5 = phosp_m5 %>%
       select(-explanatory_hrqol)
   )
 
-phosp_m5 %>% count(class)
+phosp_m5 %>% distinct(study_id, .keep_all = TRUE) %>% count(class)
+```
 
-# Fix cluster numbers. 
-phosp_m5 = phosp_m5 %>% 
+```{r eval=FALSE, include=FALSE}
+# Fix cluster numbers.
+phosp_m5 = phosp_m5 %>%
   mutate(
     class = fct_recode(class,
-                       "3" = "4",
-                       "4" = "5")
+                       "2" = "3",
+                       "3" = "4")
   )
 ```
+
 
 ## Plot clusters
 ```{r fig.height=6, fig.width=8}
 phosp_m5 %>% 
   filter(study_id %in% paired_study_id) %>% 
   select(study_id, class, time2fu, explanatory_hrqol) %>%
-  labels_to_column() %>% 
+  labels_to_column() %>%
   pivot_longer(-c(1:3)) %>% 
   ggplot_lancet(aes(x = time2fu, y = value, colour = class)) + 
   geom_line(aes(group = `REDCap ID`), alpha = 0.1) + 
   scale_colour_brewer(palette = "Set1") +
   facet_wrap(. ~ name, scale = "free_y") +
-  geom_smooth(se = FALSE, method = "gam") + 
+  geom_smooth(se = FALSE,  method = "gam") + 
   #geom_smooth(se = FALSE, method = "gam", formula = y ~ s(x, bs = "cr")) + 
   #geom_smooth(se = FALSE) + 
   labs(x = "Follow-up time (weeks after discharge)", colour = "Cluster") + 
@@ -1068,6 +1271,81 @@ phosp_m5 %>%
                                 n_common_cols = 3) %>% 
   mytable()
 ```
+
+## EQ5D
+
+```{r}
+phosp_utility = phosp_m5 %>% 
+  select(study_id, redcap_event_name, eq5d5l_utility_index_pre) %>%
+  filter(redcap_event_name != "Hospital Discharge") %>% 
+  
+  # Preferentially select 3 months >  6 weeks > 12 months for pre-covid utility index
+  mutate(redcap_event_name = fct_relevel(redcap_event_name,
+                                         "3 Months (1st Research Visit)")) %>% 
+  arrange(study_id, redcap_event_name) %>% 
+  drop_na() %>% 
+  group_by(study_id) %>% 
+  slice(1) %>% 
+  mutate(redcap_event_name = "Pre-COVID") %>% 
+  rename(eq5d5l_utility_index = eq5d5l_utility_index_pre) %>% 
+  bind_rows(
+    phosp_m5 %>% 
+      select(study_id, redcap_event_name, eq5d5l_utility_index) %>% 
+      drop_na()
+  ) %>% 
+  left_join(phosp_m5 %>% select(study_id, class) %>% 
+              distinct(study_id, .keep_all = TRUE) %>% 
+              drop_na()) %>% 
+  ungroup()
+
+```
+
+
+```{r}
+phosp_utility %>% distinct(study_id, .keep_all = TRUE) %>% count(class)
+```
+
+
+## Plot clusters
+```{r fig.height=4, fig.width=8}
+library(magrittr)
+phosp_utility %>% 
+    filter(study_id %in% paired_study_id) %>% 
+    mutate(redcap_event_name = factor(redcap_event_name,
+                                      levels = c("Pre-COVID", "3 Months (1st Research Visit)", 
+                                                 "12 Months (2nd Research Visit)"))) %T>%
+  {plot_data <<- count(., class, redcap_event_name)} %>% 
+  ggplot_lancet(aes(x = class, y = eq5d5l_utility_index, fill = class, group = interaction(redcap_event_name, class))) + 
+  geom_boxplot() +
+  geom_text(data = plot_data, aes(x = class, y = -0.5, label = n),
+            position = position_dodge(width = 0.8), hjust = 0.5) +
+  scale_colour_brewer("Cluster", palette = "Set4") +
+  scale_fill_brewer("Event", palette = "Set1") +
+  labs(x = "Cluster", y = "EQ5D5l Utility Index") +
+  theme(legend.position = "none") +
+  ggtitle("Patient symptom cluster by EQ5Dl utility index",
+        "Each group: Pre-Covid, 6 months, 12 months | Numbers are counts")
+
+
+```
+
+```{r}
+phosp_utility %>% 
+  count(class, redcap_event_name)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

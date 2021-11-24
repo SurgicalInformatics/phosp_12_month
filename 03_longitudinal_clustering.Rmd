@@ -63,7 +63,8 @@ source("/home/eharrison/phosp_clean/02_functions.R")
 #   max() %>%
 #   format("%Y-%m-%d_%H%M")
 
-timestamp = "2021-09-08_1203"
+timestamp = "2021-10-06_0400"
+# timestamp = "2021-09-08_1203"
 # timestamp = "2021-09-03_1550"
 # timestamp = "2021-07-27_0400"
 # timestamp = "2021-08-16_0400"
@@ -84,7 +85,8 @@ saveRDS(phosp_tc, paste0("phosp_tc_", timestamp, ".rds"))
 # timestamp = "2021-07-27_0400"
 # timestamp = "2021-08-16_0400"
 # timestamp = "2021-09-03_1550"
-timestamp = "2021-09-08_1203"
+# timestamp = "2021-09-08_1203"
+timestamp = "2021-10-06_0400"
 phosp = readRDS(paste0("phosp_", timestamp, ".rds"))
 phosp_wt = readRDS(paste0("phosp_wt_", timestamp, ".rds"))
 phosp_kco = readRDS(paste0("phosp_kco_", timestamp, ".rds"))
@@ -186,9 +188,7 @@ phosp_working = phosp_working %>%
     patient_sq_l_t__new_disability = factor(patient_sq_l_t__new_disability)
   ) %>% 
   ff_relabel_df(phosp_working)
-```
 
-```{r}
 phosp = phosp %>% 
   group_by(study_id) %>% 
   fill(crf3a_bmi, crf3a_bmi_2levels, crf3a_bmi_5levels, 
@@ -357,13 +357,13 @@ paired_study_id = phosp_working %>%
   count(study_id) %>% 
   filter(n == 2) %>% 
   pull(study_id)
-cat("n = ", length(paired_study_id))
+cat("Pairs prior to imputation, n =", length(paired_study_id))
 
 paired_study_id = phosp_imputed_sets[[1]] %>% 
   count(study_id) %>% 
   filter(n == 2) %>% 
   pull(study_id)
-cat("Imputed pairs n = ", length(paired_study_id))
+cat("\nPairs after imputation, n =", length(paired_study_id))
 ```
 
 
@@ -451,166 +451,6 @@ model_data %>%
   ggtitle("Distribution of patients by instrument (paired")
 ```
 
-Distributions are tricky. Gaussian and spline models run unsuccessfully (at bottom). 
-Use beta models given bounded non-normal distribution of instruments. 
-
-Important, these use all available data to cluster trajectory, including unpaired patients. 
-
-## Beta models
-
-```{r eval=FALSE}
-library(lcmm)
-set.seed(1234)
-m1_beta = map(1, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
-                          pcl5_summary + dyspnoea12_summary + 
-                           facit_item_total + sppb_score + mocal_total ~ 
-                           
-                           time2fu, 
-                         random = ~ time2fu, subject = "study_id2", 
-                         
-                         ng = .,
-                         link = 'beta',
-                         randomY = TRUE,
-                         data = model_data,
-                         
-                         maxiter = 100)
-)
-saveRDS(m1_beta, file = paste0("m1_beta_imputed_", timestamp, ".rds"))
-
-k = 2:6 %>% as.list()
-m2_beta = map(k, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
-                           pcl5_summary + dyspnoea12_summary + 
-                           facit_item_total + sppb_score + mocal_total ~ 
-                           
-                           time2fu, 
-                         mixture = ~ time2fu,
-                         random = ~ time2fu, subject = "study_id2", 
-                         
-                         ng = .,
-                         link = 'beta',
-                         randomY = TRUE, 
-                         
-                         B = m1_beta[[1]], # Use ng = 1 model for initial values
-                         data = model_data,
-                         maxiter = 100)
-)
-saveRDS(m2_beta, file = paste0("m2_beta_imputed_", timestamp, ".rds"))
-m_beta = c(m1_beta, m2_beta)
-```
-
-```{r include=FALSE}
-m1_beta = readRDS(paste0("m1_beta_imputed_", timestamp, ".rds"))
-m2_beta = readRDS(paste0("m2_beta_imputed_", timestamp, ".rds"))
-m_beta = c(m1_beta, m2_beta)
-```
-
-```{r}
-t1 = summarytable(m_beta[[1]], m_beta[[2]], m_beta[[3]],
-             m_beta[[4]], m_beta[[5]], m_beta[[6]],
-             which =c( "G", "loglik", "conv", "npm",
-                       "AIC", "BIC", "SABIC", 
-                       "entropy", "ICL", "%class"),
-             display = FALSE) 
-
-t1 %>% 
-  as_data_frame() %>% 
-  rename("Number of clusters" = "G")
-```
-
-Choose model 5 that has 4 effective clusters. 
-
-```{r eval=FALSE, include=FALSE}
-m5 = m_beta[[5]]
-summary(m5)
-```
-
-```{r eval=FALSE, include=TRUE}
-# Model checks
-## Not printed. 
-plot(m5)
-plot(m5, which="linkfunction")
-plot(m5, which="postprob")
-plot(m5, which="link")
-plot(m5, which="fit", var.time = "time2fu")
-```
-
-## Run imputed sets for chosen number of clusters 
-
-```{r eval=FALSE}
-# Use all imputed sets
-model_data_imputed = phosp_imputed_sets %>% 
-  map(~ .x %>% 
-        select(study_id, study_id2, redcap_event_name, time2fu, explanatory_hrqol) %>% 
-       bind_rows(
-         phosp_working %>% # Bring back unpaired patients
-           select(study_id, study_id2, redcap_event_name, time2fu, explanatory_hrqol) %>% 
-           filter(!study_id %in% phosp_imputed_sets[[1]]$study_id)
-       ) %>% 
-        drop_na() %>%
-        recipe(~ .) %>% 
-        step_normalize(explanatory_hrqol) %>% 
-        prep() %>% 
-        juice() %>% 
-        mutate(across(c(mocal_total, sppb_score), ~ . * -1)) %>%     # Reverse scale for these
-        as.data.frame()
-  )
-# Check they match. 
-model_data_imputed[[1]] %>% arrange(study_id2, redcap_event_name) %>% head
-model_data %>% arrange(study_id2, redcap_event_name) %>% head
-
-set.seed(1234)
-# 10 sets of model 5 (4 effective clusters)
-m5_beta_all_imputed = model_data_imputed %>% 
-  map(~ multlcmm(fixed = gad7_summary + phq9_summary + 
-                   pcl5_summary + dyspnoea12_summary + 
-                   facit_item_total + sppb_score + mocal_total ~ 
-                   
-                   time2fu, 
-                 mixture = ~ time2fu,
-                 random = ~ time2fu, subject = "study_id2", 
-                 
-                 ng = 5,
-                 link = 'beta',
-                 randomY = TRUE, 
-                 
-                 B = m1_beta[[1]], # Use ng = 1 model for initial values
-                 data = .x,
-                 maxiter = 100)
-  )
-saveRDS(m5_beta_all_imputed, file = paste0("m5_beta_all_imputed", timestamp, ".rds"))
-```
-
-```{r}
-m5_beta_all_imputed = readRDS(paste0("m5_beta_all_imputed", timestamp, ".rds"))
-```
-
-```{r}
-# Mean of class probabilities across 10 imputed models
-m5_beta_all_imputed_class = m5_beta_all_imputed %>% 
-  # Extract matrices of class probabiliites
-  map(~ .x$pprob %>% 
-        select(-c(1, 2)) %>% 
-        as.matrix()
-  ) %>% 
-  # Take mean prob across imputed sets
-  Reduce('+', .) %>% 
-  {. / 10} %>% 
-  as.data.frame() %>% 
-  # Bring study_id2 back in. 
-  bind_cols(study_id2 = m5_beta_all_imputed[[1]]$pprob[, c(1)], 
-            .) %>% 
-  tibble() %>% 
-  # Pivot and retain highest probability
-  pivot_longer(matches("prob.+")) %>% 
-  group_by(study_id2) %>% 
-  slice_max(value) %>% 
-  mutate(class = str_extract(name, "[:digit:]")) %>% # Check here. 
-  ungroup()
-
-```
-
-
-
 
 
 
@@ -623,7 +463,7 @@ m1_linear = map(1, ~ multlcmm(fixed = gad7_summary + phq9_summary +
                           pcl5_summary + dyspnoea12_summary + 
                            facit_item_total + sppb_score + mocal_total ~ 
                            
-                           time2fu, 
+                           time2fu + I(time2fu^2/10), 
                          random = ~ 1, #time2fu, 
                          subject = "study_id2", 
                          
@@ -641,8 +481,8 @@ m2_linear = map(k, ~ multlcmm(fixed = gad7_summary + phq9_summary +
                            pcl5_summary + dyspnoea12_summary + 
                            facit_item_total + sppb_score + mocal_total ~ 
                            
-                           time2fu, 
-                         mixture = ~ time2fu,
+                           time2fu + I(time2fu^2/10), 
+                         mixture = ~ time2fu + I(time2fu^2/10),
                          random = ~ 1, #time2fu, 
                          subject = "study_id2", 
                          
@@ -677,7 +517,7 @@ tmp = t1 %>%
   rename("Number of clusters" = "G")
 ```
 
-Choose model 4 that has 3 effective clusters. 
+Choose model 4 that has 4 effective clusters. 
 
 ```{r eval=FALSE, include=FALSE}
 m4 = m_linear[[4]]
@@ -692,6 +532,11 @@ plot(m4, which="linkfunction")
 plot(m4, which="postprob")
 plot(m4, which="link")
 plot(m4, which="fit", var.time = "time2fu")
+
+datnew <- data.frame(time2fu=seq(0.5, 74, length=100))
+m4_linear_predict <- predictY(m4, newdata = datnew, var.time='time2fu', draws=TRUE) 
+
+plot(m4_linear_predict, which="fit", var.time = "time2fu")
 ```
 
 ## Run imputed sets for chosen number of clusters 
@@ -719,18 +564,18 @@ model_data_imputed[[1]] %>% arrange(study_id2, redcap_event_name) %>% head
 model_data %>% arrange(study_id2, redcap_event_name) %>% head
 
 set.seed(1234)
-# 10 sets of model 4 (3 effective clusters)
-m4_linear_all_imputed = model_data_imputed %>% 
+# 10 sets of model 4
+m3_linear_all_imputed = model_data_imputed %>% 
   map(~ multlcmm(fixed = gad7_summary + phq9_summary + 
                    pcl5_summary + dyspnoea12_summary + 
                    facit_item_total + sppb_score + mocal_total ~ 
                    
-                   time2fu, 
-                 mixture = ~ time2fu,
+                   time2fu + I(time2fu^2/10), 
+                 mixture = ~ time2fu + I(time2fu^2/10),
                  random = ~ 1, #time2fu, NOTE THIS CHANGE
                  subject = "study_id2", 
                  
-                 ng = 5,
+                 ng = 3,
                  link = 'linear',
                  randomY = TRUE, 
                  
@@ -738,7 +583,7 @@ m4_linear_all_imputed = model_data_imputed %>%
                  data = .x,
                  maxiter = 100)
   )
-saveRDS(m4_linear_all_imputed, file = paste0("m5_linear_all_imputed", timestamp, ".rds"))
+saveRDS(m3_linear_all_imputed, file = paste0("m3_linear_all_imputed", timestamp, ".rds"))
 ```
 
 ```{r}
@@ -746,7 +591,7 @@ m3_linear_all_imputed = readRDS(paste0("m3_linear_all_imputed", timestamp, ".rds
 m4_linear_all_imputed = readRDS(paste0("m4_linear_all_imputed", timestamp, ".rds"))
 
 # CHOOSE HERE
-# m4_linear_all_imputed = m3_linear_all_imputed
+m4_linear_all_imputed = m3_linear_all_imputed
 ```
 
 ```{r}
@@ -773,6 +618,7 @@ summarytable(m4_linear_all_imputed[[1]], m4_linear_all_imputed[[2]],
 
 
 ```
+
 
 
 ```{r}
@@ -995,12 +841,6 @@ phosp_m5 %>%
   ggtitle("Patient trajectories classified by cluster")
 ```
 
-My interpretation. 
-
-* Red (1) have greatest deficit and don't get better. 
-* Blue (2) have moderate defict but get better.
-* Green (3) have minimal deficit and improve from this. 
-* Purple (4) have initial minimal deficit but get worse. 
 
 ```{r eval=FALSE, include=FALSE}
 time_sim = seq(20, 60, 2)
@@ -1335,196 +1175,101 @@ phosp_utility %>%
 ```
 
 
+## 12 month regression model
+
+### Multivariable logistic regression (complete cases, no clustering by hospital)
+
+```{r}
+datadir = "/home/common/phosp/cleaned/full/"
+timestamp = "2021-09-08_1203"
+phosp_hosp   = read_rds(paste0(datadir, "phosp_hosp_", timestamp, "_full.rds"))
+
+phosp_hosp = phosp_hosp %>% 
+  filter(tier == 2) %>% 
+  left_join(phosp %>% 
+              filter(redcap_event_name== "12 Months (2nd Research Visit)") %>% 
+              filter(is.na(redcap_repeat_instance)) %>% 
+              select(study_id, psq_recovered)) %>% 
+  left_join(phosp %>% 
+              filter(redcap_event_name == "3 Months (1st Research Visit)") %>% 
+              filter(is.na(redcap_repeat_instance)) %>% 
+              select(study_id, crf3a_bmi, crf3a_bmi_2levels, crf3a_bmi_5levels) %>% 
+              drop_na(crf3a_bmi)
+  ) %>% 
+  mutate(
+    psq_recovered = fct_recode(psq_recovered , "No" = "Not sure") %>% 
+      fct_relevel("No")
+  )
+```
 
 
+```{r}
+dependent = "psq_recovered"
+explanatory = c("age_admission_factor", "crf1a_sex", "crf1b_eth_5levels", "imd_quintile", "no_comorbid_3levels", "crf3a_bmi_2levels", "crf1a_resp_support_4levels", "crf1a_treat_ss", "crf1a_treat_at", "crf1a_treat_tdac")
+explanatory_multi = c("age_admission", "crf1a_sex", "crf1b_eth_5levels", "imd_quintile", "no_comorbid_3levels")
+
+fit_cc = phosp_hosp %>% 
+  finalfit(dependent, explanatory, metrics = TRUE)
+
+fit_cc[[1]] %>% 
+  mytable()
+
+fit_cc[[2]]
+```
 
 
+## Figure: Multivariable logistic regression
 
+```{r fig.height=7, fig.width=12}
+dependent = "psq_recovered"
+explanatory = c("age_admission_factor", "crf1a_sex", "crf1b_eth_5levels", "imd_quintile", "no_comorbid_3levels", "crf3a_bmi_2levels", "crf1a_resp_support_4levels", "crf1a_treat_ss")
 
+phosp_hosp %>%
+  or_plot(dependent, explanatory, column_space = c(-0.5, 0.15, 0.5), table_text_size = 4,
+          dependent_label = "", suffix = "",
+          breaks = c(0.2, 0.5, 1, 2, 5, 10, 30), )
+# PDF 10 x 9
+```
 
+## Table 4: Occupation status prior to hospitalisation and at follow-up stratified by acute illness
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Log transform
-
-These don't look good, below, so I went back to beta to work out why not converging. Not enough samples / linked patients?
-
-```{r eval=FALSE, include=FALSE}
-library(recipes)
-model_data2 = phosp_working %>% 
-  select(study_id, study_id2, time2fu, explanatory_hrqol) %>% 
+```{r}
+explanatory_occupation = c(
+  # "crf1b_healthcare_worker", "crf1b_caring",
+  "social_status_before", #  "social_status_after", 
+  "working_status_change", "working_less", 
+  "no_longer_working", "health_reasons",
+  "employer_reasons", "other_reasons"
   
-  filter(mocal_total > 10) %>% # Note this, moca = 1, ~ 15 SD away from mean. 
+  # "patient_sq_q", "patient_sq_q_today", "patient_sq_q_change",
+  # "patient_sq_p_smoking", "patient_sq_p_drinking",
+  # "patient_sq_p_eating", "patient_sq_p_activity"
+)
+
+phosp %>%
+  filter(redcap_event_name %in% c("3 Months (1st Research Visit)", "12 Months (2nd Research Visit)")) %>% 
+  group_by(study_id) %>% 
+  fill(social_status_before) %>% 
+  ungroup() %>% 
+  filter(tier == 2) %>% 
+  filter(redcap_event_name== "12 Months (2nd Research Visit)") %>% 
+  filter(is.na(redcap_repeat_instance)) %>% 
   
-  drop_na() %T>% 
-  {data_in <<- .} %>% 
-  recipe(~ .) %>% 
-  step_log(explanatory_hrqol, offset = 0.01) %>% 
-  step_normalize(explanatory_hrqol) %>% 
-  prep() %>% 
-  juice() %>% 
-  mutate(across(c(mocal_total, sppb_score), ~ . * -1)) %>%     # Reverse scale for these
-  as.data.frame()
-
-model_data2 %>% 
-  pivot_longer(explanatory_hrqol) %>% 
-  ggplot(aes(value)) + 
-  geom_histogram() + 
-  facet_wrap(~ name, scale = "free_x")
+  mutate(
+    psq_recovered = fct_recode(psq_recovered , "No" = "Not sure") %>% 
+      fct_relevel("No")
+  ) %>% 
+  
+  summary_factorlist(dependent,  explanatory_occupation,
+                     na_include = TRUE, na_include_dependent = TRUE,
+                     total_col = TRUE, add_dependent_label = TRUE,
+                     add_col_totals = TRUE, add_row_totals = TRUE, include_row_missing_col = FALSE,
+                     p = TRUE, digits = c(1, 1, 4, 1)) %>% 
+  mytable()
 ```
 
 
-These gave odd results, possibly because of outliers or because distributions far from gaussian. 
-
-```{r eval=FALSE, include=FALSE}
-# On initial exploration, nothing above 5 worth looking at. 
-
-library(lcmm)
-fit1_lin = map(1, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
-                          pcl5_summary + dyspnoea12_summary + 
-                           facit_item_total + sppb_score + mocal_total ~ 
-                           
-                           time2fu, 
-                         random = ~ time2fu, subject = "study_id2", 
-                         
-                         ng = .,
-                         randomY = FALSE, # What is this and should it be true?
-                         data = model_data2)
-)
-saveRDS(fit1_lin, file = "multlcmm_lin1.rds")
-
-k = 2:5 %>% as.list()
-fit2_lin = map(k, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
-                           pcl5_summary + dyspnoea12_summary + 
-                           facit_item_total + sppb_score + mocal_total ~ 
-                           
-                           time2fu, 
-                         mixture = ~ time2fu,
-                         random = ~ time2fu, subject = "study_id2", 
-                         
-                         ng = .,
-                         randomY = FALSE, # What is this and should it be true?
-                         
-                         B = fit1_lin[[1]], # Use ng = 1 model for initial values
-                         data = model_data)
-)
-saveRDS(fit2_lin, file = "multlcmm_lin2.rds")
-
-fit = c(fit1_lin, fit2_lin)
-```
-
-```{r eval=FALSE, include=FALSE}
-summarytable(fit[[1]], fit[[2]], fit[[3]], 
-             fit[[4]], fit[[5]],
-             which =c( "G", "loglik", "conv", "npm",
-                       "AIC", "BIC", "SABIC", 
-                       "entropy", "ICL", "%class"))
-```
-
-```{r eval=FALSE, include=FALSE}
-m4 = fit[[4]]
-m4
-str(m4)
-
-tmp = m4$pprob %>% 
-  tibble() %>% 
-  select(study_id, class) %>% 
-  mutate(study_id = as.character(study_id) %>% as.numeric())%>% 
-  left_join(phosp_working)
-
-model_data2_new = data.
-data_pred0 <- data.frame(age=seq(65,95,length.out=50),CEP=0)
-data_pred1 <- data.frame(age=seq(65,95,length.out=50),CEP=1)
-data_pred0$age65 <- (data_pred0$age - 65)/10
-data_pred1$age65 <- (data_pred1$age - 65)/10
- 
-model2
-
- 
-m4$pprob$class
-pred0 <- predictY(m2d, data_pred0, var.time = "age")
-pred1 <- predictY(m2d, data_pred1, var.time = "age")
-```
 
 
-## Spline models
-
-```{r eval=FALSE, include=FALSE}
-
-# These are not good models. 
-
-library(lcmm)
-set.seed(1234)
-m1_spline = map(1, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
-                          pcl5_summary + dyspnoea12_summary + 
-                           facit_item_total + sppb_score + mocal_total ~ 
-                           
-                           time2fu, 
-                         random = ~ time2fu, subject = "study_id2", 
-                         
-                         ng = .,
-                         link = '3-quant-splines',
-                         randomY = TRUE, # What is this and should it be true?
-                         data = model_data,
-                         
-                         maxiter = 100)
-)
-
-saveRDS(m1_spline, file = "m1_spline.rds")
 
 
-k = 2:6 %>% as.list()
-m2_spline = map(k, ~ multlcmm(fixed = gad7_summary + phq9_summary + 
-                           pcl5_summary + dyspnoea12_summary + 
-                           facit_item_total + sppb_score + mocal_total ~ 
-                           
-                           time2fu, 
-                         mixture = ~ time2fu,
-                         random = ~ time2fu, subject = "study_id2", 
-                         
-                         ng = .,
-                         link = '3-quant-splines',
-                         randomY = TRUE, 
-                         
-                         B = m1_spline[[1]], # Use ng = 1 model for initial values
-                         data = model_data,
-                         maxiter = 100)
-)
-saveRDS(m2_spline, file = "m2_spline.rds")
-
-m_spline = c(m1_spline, m2_spline)
-```
-
-```{r eval=FALSE, include=FALSE}
-summarytable(m_spline[[1]], m_spline[[2]], m_spline[[3]],
-             m_spline[[4]], m_spline[[5]], m_spline[[6]],
-             which =c( "G", "loglik", "conv", "npm",
-                       "AIC", "BIC", "SABIC", 
-                       "entropy", "ICL", "%class"))
-```

@@ -28,7 +28,7 @@ knitr::opts_chunk$set(echo = FALSE,
 # Only run once for each new data pull
 library(readr) # loaded with tidyverse anyway
 datadir = "/home/common/phosp/raw/"
-timestamp = "2021-07-07_0400"
+timestamp = "2021-09-08_1203"
 phosp   = read_rds(paste0(datadir, "phosp_", timestamp, ".rds"))
 lastrun = Sys.time()
 source("/home/eharrison/phosp_clean/02_functions.R")
